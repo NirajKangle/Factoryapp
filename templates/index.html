@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MIDC Shop — Job Tracker</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --surface: #1a2332;
+      --surface-2: #243044;
+      --border: #2f3f56;
+      --text: #e8edf4;
+      --muted: #8b9cb3;
+      --accent: #3b82f6;
+      --accent-hover: #2563eb;
+      --pre-work: #6366f1;
+      --machining: #f59e0b;
+      --qc: #10b981;
+      --dispatch: #22c55e;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      line-height: 1.5;
+    }
+
+    header {
+      padding: 1.25rem 1.5rem;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+
+    header h1 {
+      font-size: 1.35rem;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+    }
+
+    header p {
+      color: var(--muted);
+      font-size: 0.875rem;
+    }
+
+    .header-meta {
+      text-align: right;
+    }
+
+    main {
+      padding: 1.5rem;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    .new-job {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.25rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .new-job h2 {
+      font-size: 0.95rem;
+      font-weight: 600;
+      margin-bottom: 0.875rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .new-job form {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      align-items: end;
+    }
+
+    label {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+      flex: 1;
+      min-width: 160px;
+    }
+
+    input[type="text"] {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      padding: 0.55rem 0.75rem;
+      font-size: 0.95rem;
+    }
+
+    input[type="text"]:focus {
+      outline: 2px solid var(--accent);
+      outline-offset: 1px;
+    }
+
+    button,
+    .btn {
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      padding: 0.6rem 1rem;
+      font-size: 0.875rem;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    button:hover,
+    .btn:hover {
+      background: var(--accent-hover);
+    }
+
+    .btn-small {
+      padding: 0.4rem 0.65rem;
+      font-size: 0.78rem;
+      width: 100%;
+    }
+
+    .btn-advance {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+
+    .btn-advance:hover {
+      background: var(--border);
+    }
+
+    .board {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 1rem;
+      align-items: start;
+    }
+
+    @media (max-width: 1024px) {
+      .board {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 640px) {
+      .board {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .column {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      min-height: 320px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .column-header {
+      padding: 0.875rem 1rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
+    }
+
+    .column-header h3 {
+      font-size: 0.9rem;
+      font-weight: 600;
+    }
+
+    .count {
+      background: var(--surface-2);
+      color: var(--muted);
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 0.15rem 0.5rem;
+      border-radius: 999px;
+    }
+
+    .column-body {
+      padding: 0.75rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      flex: 1;
+    }
+
+    .column[data-status="pre_work"] .column-header { border-top: 3px solid var(--pre-work); }
+    .column[data-status="machining"] .column-header { border-top: 3px solid var(--machining); }
+    .column[data-status="qc"] .column-header { border-top: 3px solid var(--qc); }
+    .column[data-status="dispatch"] .column-header { border-top: 3px solid var(--dispatch); }
+
+    .job-card {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.875rem;
+    }
+
+    .job-id {
+      font-weight: 700;
+      font-size: 0.95rem;
+      margin-bottom: 0.35rem;
+    }
+
+    .job-phone {
+      color: var(--muted);
+      font-size: 0.82rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .job-time {
+      color: var(--muted);
+      font-size: 0.72rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .empty {
+      color: var(--muted);
+      font-size: 0.85rem;
+      text-align: center;
+      padding: 2rem 1rem;
+      border: 1px dashed var(--border);
+      border-radius: 8px;
+    }
+
+    .summary {
+      margin-top: 1.5rem;
+      color: var(--muted);
+      font-size: 0.85rem;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>MIDC Machine Shop</h1>
+      <p>Job status tracker</p>
+    </div>
+    <div class="header-meta">
+      <p>{{ jobs|length }} active job{{ '' if jobs|length == 1 else 's' }}</p>
+    </div>
+  </header>
+
+  <main>
+    <section class="new-job">
+      <h2>New Job</h2>
+      <form action="{{ url_for('add_job') }}" method="post">
+        <label>
+          Job ID
+          <input type="text" name="job_id" placeholder="MIDC-2026-0142" required>
+        </label>
+        <label>
+          Client Phone
+          <input type="text" name="client_phone" placeholder="+15551234567" required>
+        </label>
+        <button type="submit">Add Job</button>
+      </form>
+    </section>
+
+    <section class="board">
+      {% for status_key, status_label in statuses %}
+      <div class="column" data-status="{{ status_key }}">
+        <div class="column-header">
+          <h3>{{ status_label }}</h3>
+          <span class="count">{{ columns[status_key]|length }}</span>
+        </div>
+        <div class="column-body">
+          {% if columns[status_key] %}
+            {% for job in columns[status_key] %}
+            <article class="job-card">
+              <div class="job-id">{{ job.job_id }}</div>
+              <div class="job-phone">{{ job.client_phone }}</div>
+              <div class="job-time">
+                Updated {{ job.updated_at.strftime('%b %d, %Y %I:%M %p') }}
+              </div>
+              {% if status_key != 'dispatch' %}
+              <form action="{{ url_for('advance_job', job_id=job.job_id) }}" method="post">
+                <button type="submit" class="btn btn-small btn-advance">
+                  Move to next stage
+                </button>
+              </form>
+              {% else %}
+              <span class="job-time">Ready for pickup / shipped</span>
+              {% endif %}
+            </article>
+            {% endfor %}
+          {% else %}
+            <div class="empty">No jobs in this stage</div>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </section>
+
+    <p class="summary">
+      Pipeline: Pre-Work → Machining → QC → Dispatch
+    </p>
+  </main>
+</body>
+</html>
