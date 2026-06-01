@@ -4,12 +4,13 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from flask import Flask, jsonify, redirect, render_template, request, url_for
+from flask import Flask, jsonify, redirect, render_template, request, send_from_directory, url_for
 
 app = Flask(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_SQLITE_PATH = BASE_DIR / "midc_shop.db"
+REACT_DIST = BASE_DIR / "static" / "dist"
 
 STATUSES = [
     ("pre_work", "Pre-Work"),
@@ -232,7 +233,81 @@ def create_job(job_id, client_phone):
             )
 
 
-def advance_job_status(job_id, notes=None):
+def set_job_status(job_id, new_status, notes=None):
+    if new_status not in STATUS_ORDER:
+        return None, "Invalid status."
+
+    with get_db() as conn:
+        if DB_BACKEND == "postgres":
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT status FROM jobs WHERE job_id = %s FOR UPDATE",
+                    (job_id,),
+                )
+                row = cur.fetchone()
+        else:
+            row = conn.execute(
+                "SELECT status FROM jobs WHERE job_id = ?",
+                (job_id,),
+            ).fetchone()
+            row = (row["status"],) if row else None
+
+        if row is None:
+            return None, "Job not found."
+
+        current_status = row[0]
+        if current_status == new_status:
+            return new_status, None
+
+        changed_at = datetime.now(timezone.utc)
+
+        if DB_BACKEND == "postgres":
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE jobs
+                    SET status = %s, updated_at = %s
+                    WHERE job_id = %s
+                    """,
+                    (new_status, changed_at, job_id),
+                )
+                cur.execute(
+                    """
+                    INSERT INTO status_history (job_id, from_status, to_status, changed_at, notes)
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (job_id, current_status, new_status, changed_at, notes or None),
+                )
+        else:
+            conn.execute(
+                """
+                UPDATE jobs
+                SET status = ?, updated_at = ?
+                WHERE job_id = ?
+                """,
+                (new_status, changed_at.isoformat(), job_id),
+            )
+            conn.execute(
+                """
+                INSERT INTO status_history (job_id, from_status, to_status, changed_at, notes)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    job_id,
+                    current_status,
+                    new_status,
+                    changed_at.isoformat(),
+                    notes or None,
+                ),
+            )
+
+        return new_status, None
+
+
+def move_job_status(job_id, direction=1, notes=None):
+    if direction not in (1, -1):
+        return None, "Invalid move direction."
+
     with get_db() as conn:
         if DB_BACKEND == "postgres":
             with conn.cursor() as cur:
@@ -257,57 +332,30 @@ def advance_job_status(job_id, notes=None):
         except ValueError:
             return None, "Unknown job status."
 
-        if current_index >= len(STATUS_ORDER) - 1:
+        new_index = current_index + direction
+        if new_index < 0:
+            return None, "Job is already at the first stage."
+        if new_index >= len(STATUS_ORDER):
             return None, "Job is already at the final stage."
 
-        next_status = STATUS_ORDER[current_index + 1]
-        changed_at = datetime.now(timezone.utc)
+        new_status = STATUS_ORDER[new_index]
+        return set_job_status(job_id, new_status, notes=notes)
 
-        if DB_BACKEND == "postgres":
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    UPDATE jobs
-                    SET status = %s, updated_at = %s
-                    WHERE job_id = %s
-                    """,
-                    (next_status, changed_at, job_id),
-                )
-                cur.execute(
-                    """
-                    INSERT INTO status_history (job_id, from_status, to_status, changed_at, notes)
-                    VALUES (%s, %s, %s, %s, %s)
-                    """,
-                    (job_id, current_status, next_status, changed_at, notes or None),
-                )
-        else:
-            conn.execute(
-                """
-                UPDATE jobs
-                SET status = ?, updated_at = ?
-                WHERE job_id = ?
-                """,
-                (next_status, changed_at.isoformat(), job_id),
-            )
-            conn.execute(
-                """
-                INSERT INTO status_history (job_id, from_status, to_status, changed_at, notes)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (
-                    job_id,
-                    current_status,
-                    next_status,
-                    changed_at.isoformat(),
-                    notes or None,
-                ),
-            )
 
-        return next_status, None
+def advance_job_status(job_id, notes=None):
+    return move_job_status(job_id, direction=1, notes=notes)
+
+
+def revert_job_status(job_id, notes=None):
+    return move_job_status(job_id, direction=-1, notes=notes)
 
 
 @app.route("/")
 def index():
+    react_index = REACT_DIST / "index.html"
+    if react_index.exists():
+        return send_from_directory(REACT_DIST, "index.html")
+
     jobs = fetch_jobs()
     columns = {status: [] for status in STATUS_ORDER}
     for job in jobs:
@@ -322,12 +370,19 @@ def index():
     )
 
 
+@app.route("/assets/<path:filename>")
+def react_assets(filename):
+    return send_from_directory(REACT_DIST / "assets", filename)
+
+
 @app.route("/jobs", methods=["POST"])
 def add_job():
     job_id = request.form.get("job_id", "").strip()
     client_phone = request.form.get("client_phone", "").strip()
 
     if not job_id or not client_phone:
+        if request.accept_mimetypes.best == "application/json":
+            return jsonify({"error": "job_id and client_phone are required"}), 400
         return redirect(url_for("index"))
 
     try:
@@ -340,7 +395,21 @@ def add_job():
         else:
             raise
 
+    if request.accept_mimetypes.best == "application/json":
+        return jsonify({"ok": True}), 201
     return redirect(url_for("index"))
+
+
+@app.route("/jobs/<job_id>/move", methods=["POST"])
+def move_job(job_id):
+    payload = request.get_json(silent=True) or {}
+    new_status = (request.form.get("status") or payload.get("status") or "").strip()
+    notes = request.form.get("notes", "").strip() or payload.get("notes") or None
+
+    _, error = set_job_status(job_id, new_status, notes=notes)
+    if error:
+        return jsonify({"error": error}), 400
+    return jsonify({"ok": True, "status": new_status})
 
 
 @app.route("/jobs/<job_id>/advance", methods=["POST"])
@@ -349,6 +418,19 @@ def advance_job(job_id):
     _, error = advance_job_status(job_id, notes=notes)
     if error and request.accept_mimetypes.best == "application/json":
         return jsonify({"error": error}), 400
+    if request.accept_mimetypes.best == "application/json":
+        return jsonify({"ok": True})
+    return redirect(url_for("index"))
+
+
+@app.route("/jobs/<job_id>/revert", methods=["POST"])
+def revert_job(job_id):
+    notes = request.form.get("notes", "").strip() or None
+    _, error = revert_job_status(job_id, notes=notes)
+    if error and request.accept_mimetypes.best == "application/json":
+        return jsonify({"error": error}), 400
+    if request.accept_mimetypes.best == "application/json":
+        return jsonify({"ok": True})
     return redirect(url_for("index"))
 
 

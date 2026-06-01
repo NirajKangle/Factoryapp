@@ -1,4 +1,6 @@
 <!DOCTYPE html>
+<!-- Fallback UI when the React build (frontend/) has not been run yet.
+     After `cd frontend && npm run build`, Flask serves static/dist/index.html instead. -->
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -146,6 +148,23 @@
 
     .btn-advance:hover {
       background: var(--border);
+    }
+
+    .job-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .btn-revert {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--muted);
+    }
+
+    .btn-revert:hover {
+      background: var(--border);
+      color: var(--text);
     }
 
     .board {
@@ -297,13 +316,7 @@
               <div class="job-time">
                 Updated {{ job.updated_at.strftime('%b %d, %Y %I:%M %p') }}
               </div>
-              {% if status_key != 'dispatch' %}
-              <form action="{{ url_for('advance_job', job_id=job.job_id) }}" method="post">
-                <button type="submit" class="btn btn-small btn-advance">
-                  Move to next stage
-                </button>
-              </form>
-              {% else %}
+              {% if status_key == 'dispatch' %}
               <span class="job-time">Ready for pickup / shipped</span>
               {% endif %}
             </article>
@@ -317,7 +330,7 @@
     </section>
 
     <p class="summary">
-      Pipeline: Pre-Work → Machining → QC → Dispatch
+      Drag cards between columns to update status (React UI)
     </p>
   </main>
 </body>
