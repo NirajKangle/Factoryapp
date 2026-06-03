@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -11,37 +11,21 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
-import { Calendar, GripVertical, Phone, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
 
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { AssigneeDisplay } from "@/components/ui/assignee-display";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import {
-  CLIENT_AVATARS,
-  formatUpdatedAt,
-  PIPELINE,
-  type Job,
-  type JobStatus,
-} from "@/lib/job-status";
+import { StatusBadge } from "@/components/ui/status-badge";
+import { PIPELINE, type Job, type JobStatus } from "@/lib/job-status";
 import { cn } from "@/lib/utils";
 
 export interface KanbanBoardProps {
   jobs: Job[];
   loading?: boolean;
-  onMoveJob: (jobId: string, targetStatus: JobStatus) => Promise<void>;
-}
-
-function avatarForJob(jobId: string): string {
-  const index = jobId.split("").reduce((sum, char) => sum + char.charCodeAt(0), 0);
-  return CLIENT_AVATARS[index % CLIENT_AVATARS.length];
-}
-
-function initialsFromJobId(jobId: string): string {
-  const parts = jobId.split(/[-_\s]+/).filter(Boolean);
-  if (parts.length >= 2) {
-    return `${parts[0][0] ?? ""}${parts[1][0] ?? ""}`.toUpperCase();
-  }
-  return jobId.slice(0, 2).toUpperCase();
+  selectedTaskId: string | null;
+  onMoveJob: (taskId: string, targetStatus: JobStatus) => Promise<void>;
+  onSelectTask: (job: Job) => void;
 }
 
 function isJobStatus(value: string): value is JobStatus {
@@ -52,54 +36,58 @@ function resolveDropStatus(overId: string, jobs: Job[]): JobStatus | null {
   if (isJobStatus(overId)) {
     return overId;
   }
-  const job = jobs.find((entry) => entry.job_id === overId);
+  const job = jobs.find((entry) => entry.task_id === overId);
   return job?.status ?? null;
 }
 
 function JobCardContent({ job }: { job: Job }) {
+  const description = (job.description ?? "").trim();
+
   return (
-    <CardContent className="p-5">
-      <div className="space-y-4">
-        <div className="flex items-start justify-between gap-2">
-          <h4 className="font-semibold leading-tight text-foreground">{job.job_id}</h4>
-          <GripVertical className="h-5 w-5 shrink-0 text-muted-foreground" />
-        </div>
+    <CardContent className="p-4">
+      <div className="space-y-3">
+        <h4 className="line-clamp-2 text-base font-semibold leading-snug text-foreground">
+          {job.job_id}
+        </h4>
 
-        <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
-          <Phone className="h-4 w-4" />
-          {job.client_phone}
-        </p>
+        <AssigneeDisplay
+          name={job.assignee_name}
+          photo={job.assignee_photo}
+          compact
+        />
 
-        <div className="flex flex-wrap gap-2">
-          <Badge variant="outline" className="text-xs">
-            {job.status_label}
-          </Badge>
+        <p className="text-sm text-muted-foreground">{job.client_phone}</p>
+
+        {description ? (
+          <p className="line-clamp-2 text-sm text-muted-foreground/90">{description}</p>
+        ) : null}
+
+        <div className="flex flex-wrap items-center gap-2">
+          <StatusBadge status={job.status} label={job.status_label} />
           {job.status === "dispatch" && (
-            <Badge className="text-xs">Ready for pickup</Badge>
+            <Badge variant="secondary" className="text-xs font-normal">
+              Ready for pickup
+            </Badge>
           )}
-        </div>
-
-        <div className="flex items-center justify-between border-t border-border/50 pt-2">
-          <div className="flex items-center gap-1 text-muted-foreground">
-            <Calendar className="h-4 w-4" />
-            <span className="text-xs font-medium">{formatUpdatedAt(job.updated_at)}</span>
-          </div>
-
-          <Avatar className="h-8 w-8 ring-2 ring-background">
-            <AvatarImage src={avatarForJob(job.job_id)} alt={job.job_id} />
-            <AvatarFallback className="text-xs font-medium">
-              {initialsFromJobId(job.job_id)}
-            </AvatarFallback>
-          </Avatar>
         </div>
       </div>
     </CardContent>
   );
 }
 
-function DraggableJobCard({ job }: { job: Job }) {
+function DraggableJobCard({
+  job,
+  selectedTaskId,
+  onSelectTask,
+  suppressClickRef,
+}: {
+  job: Job;
+  selectedTaskId: string | null;
+  onSelectTask: (job: Job) => void;
+  suppressClickRef: React.MutableRefObject<boolean>;
+}) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
-    id: job.job_id,
+    id: job.task_id,
     data: { job, type: "job" },
   });
 
@@ -112,11 +100,16 @@ function DraggableJobCard({ job }: { job: Job }) {
       ref={setNodeRef}
       style={style}
       className={cn(
-        "touch-none border bg-card/80 backdrop-blur-sm transition-shadow hover:bg-card",
-        isDragging && "opacity-40 shadow-none"
+        "cursor-pointer border bg-card transition-all hover:border-primary/30 hover:shadow-md",
+        isDragging && "opacity-40 shadow-none",
+        selectedTaskId === job.task_id && "border-primary ring-2 ring-primary/25"
       )}
       {...listeners}
       {...attributes}
+      onClick={() => {
+        if (suppressClickRef.current) return;
+        onSelectTask(job);
+      }}
     >
       <JobCardContent job={job} />
     </Card>
@@ -130,6 +123,9 @@ function KanbanColumn({
   jobs,
   loading,
   isOver,
+  selectedTaskId,
+  onSelectTask,
+  suppressClickRef,
 }: {
   columnKey: JobStatus;
   label: string;
@@ -137,6 +133,9 @@ function KanbanColumn({
   jobs: Job[];
   loading: boolean;
   isOver: boolean;
+  selectedTaskId: string | null;
+  onSelectTask: (job: Job) => void;
+  suppressClickRef: React.MutableRefObject<boolean>;
 }) {
   const { setNodeRef } = useDroppable({
     id: columnKey,
@@ -146,47 +145,64 @@ function KanbanColumn({
   return (
     <div
       className={cn(
-        "rounded-3xl border border-border bg-card/40 p-5 backdrop-blur-xl transition-colors",
-        isOver && "bg-primary/10 ring-2 ring-primary/40"
+        "rounded-2xl border border-border bg-muted/20 p-4",
+        isOver && "bg-primary/5 ring-2 ring-primary/30"
       )}
     >
-      <div className="mb-6 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="h-4 w-4 rounded-full" style={{ backgroundColor: color }} />
-          <h3 className="font-semibold text-foreground">{label}</h3>
-          <Badge variant="secondary">{jobs.length}</Badge>
+      <div className="mb-4 flex items-center justify-between">
+        <div className="flex items-center gap-2.5">
+          <div className="h-3 w-3 rounded-full" style={{ backgroundColor: color }} />
+          <h3 className="text-sm font-semibold text-foreground">{label}</h3>
+          <Badge variant="secondary" className="h-5 px-1.5 text-xs font-normal">
+            {jobs.length}
+          </Badge>
         </div>
         <button
           type="button"
-          className="rounded-full p-1 transition-colors hover:bg-secondary"
+          className="rounded-full p-1 text-muted-foreground transition-colors hover:bg-secondary"
           aria-label={`Add job to ${label}`}
         >
-          <Plus className="h-4 w-4 text-muted-foreground" />
+          <Plus className="h-4 w-4" />
         </button>
       </div>
 
-      <div ref={setNodeRef} className="min-h-[160px] space-y-4">
+      <div ref={setNodeRef} className="min-h-[140px] space-y-3">
         {loading ? (
-          <p className="text-center text-sm text-muted-foreground">Loading…</p>
+          <p className="py-8 text-center text-sm text-muted-foreground">Loading…</p>
         ) : jobs.length === 0 ? (
-          <div className="flex min-h-[120px] items-center justify-center rounded-2xl border border-dashed border-border p-6 text-sm text-muted-foreground">
+          <div className="flex min-h-[100px] items-center justify-center rounded-xl border border-dashed border-border/80 px-4 py-6 text-center text-sm text-muted-foreground">
             Drop jobs here
           </div>
         ) : (
-          jobs.map((job) => <DraggableJobCard key={job.job_id} job={job} />)
+          jobs.map((job) => (
+            <DraggableJobCard
+              key={job.task_id}
+              job={job}
+              selectedTaskId={selectedTaskId}
+              onSelectTask={onSelectTask}
+              suppressClickRef={suppressClickRef}
+            />
+          ))
         )}
       </div>
     </div>
   );
 }
 
-export function KanbanBoard({ jobs, loading = false, onMoveJob }: KanbanBoardProps) {
+export function KanbanBoard({
+  jobs,
+  loading = false,
+  selectedTaskId,
+  onMoveJob,
+  onSelectTask,
+}: KanbanBoardProps) {
   const [activeJob, setActiveJob] = useState<Job | null>(null);
   const [overStatus, setOverStatus] = useState<JobStatus | null>(null);
+  const suppressClickRef = useRef(false);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
-      activationConstraint: { distance: 6 },
+      activationConstraint: { distance: 8 },
     })
   );
 
@@ -196,8 +212,9 @@ export function KanbanBoard({ jobs, loading = false, onMoveJob }: KanbanBoardPro
   }));
 
   function handleDragStart(event: DragStartEvent) {
+    suppressClickRef.current = true;
     const job = event.active.data.current?.job as Job | undefined;
-    setActiveJob(job ?? jobs.find((entry) => entry.job_id === event.active.id) ?? null);
+    setActiveJob(job ?? jobs.find((entry) => entry.task_id === event.active.id) ?? null);
   }
 
   function handleDragOver(event: { over: DragEndEvent["over"] }) {
@@ -212,19 +229,25 @@ export function KanbanBoard({ jobs, loading = false, onMoveJob }: KanbanBoardPro
     const { active, over } = event;
     setActiveJob(null);
     setOverStatus(null);
+    window.setTimeout(() => {
+      suppressClickRef.current = false;
+    }, 0);
 
     if (!over) return;
 
-    const jobId = String(active.id);
+    const taskId = String(active.id);
     const targetStatus = resolveDropStatus(String(over.id), jobs);
     if (!targetStatus) return;
 
-    void onMoveJob(jobId, targetStatus);
+    void onMoveJob(taskId, targetStatus);
   }
 
   function handleDragCancel() {
     setActiveJob(null);
     setOverStatus(null);
+    window.setTimeout(() => {
+      suppressClickRef.current = false;
+    }, 0);
   }
 
   return (
@@ -235,25 +258,21 @@ export function KanbanBoard({ jobs, loading = false, onMoveJob }: KanbanBoardPro
       onDragEnd={handleDragEnd}
       onDragCancel={handleDragCancel}
     >
-      <div>
-        <div className="mb-6 text-center">
-          <h2 className="mb-2 text-2xl font-light text-foreground">Job Pipeline</h2>
-          <p className="text-muted-foreground">Drag and drop jobs between stages</p>
-        </div>
-
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-4">
-          {columns.map((column) => (
-            <KanbanColumn
-              key={column.key}
-              columnKey={column.key}
-              label={column.label}
-              color={column.color}
-              jobs={column.jobs}
-              loading={loading}
-              isOver={overStatus === column.key}
-            />
-          ))}
-        </div>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {columns.map((column) => (
+          <KanbanColumn
+            key={column.key}
+            columnKey={column.key}
+            label={column.label}
+            color={column.color}
+            jobs={column.jobs}
+            loading={loading}
+            isOver={overStatus === column.key}
+            selectedTaskId={selectedTaskId}
+            onSelectTask={onSelectTask}
+            suppressClickRef={suppressClickRef}
+          />
+        ))}
       </div>
 
       <DragOverlay dropAnimation={null}>
