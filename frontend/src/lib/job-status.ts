@@ -78,6 +78,14 @@ export function findTeamMember(name: string): TeamMember | undefined {
   );
 }
 
+/** Payload encoded in each task QR — matches floor scan parser in app.py */
+export function getTaskScanPayload(taskId: string, jobId?: string): string {
+  return JSON.stringify({
+    task_id: taskId,
+    ...(jobId ? { job_id: jobId } : {}),
+  });
+}
+
 export function formatUpdatedAt(iso: string): string {
   return new Date(iso).toLocaleString(undefined, {
     month: "short",

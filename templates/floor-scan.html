@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>MyFactory — Floor Scan</title>
+  <style>
+    :root {
+      --bg: #09090b;
+      --card: #18181b;
+      --border: #3f3f46;
+      --text: #fafafa;
+      --muted: #a1a1aa;
+      --ok: #22c55e;
+      --err: #ef4444;
+      --accent: #3b82f6;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      padding: 1rem 1.25rem;
+      border-bottom: 1px solid var(--border);
+      background: var(--card);
+    }
+    header h1 { font-size: 1.125rem; font-weight: 600; }
+    header p { font-size: 0.8125rem; color: var(--muted); margin-top: 0.25rem; }
+    .station-pill {
+      display: inline-block;
+      margin-top: 0.5rem;
+      padding: 0.25rem 0.75rem;
+      border-radius: 999px;
+      background: var(--accent);
+      color: #fff;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    main { flex: 1; display: flex; flex-direction: column; padding: 1rem; gap: 1rem; }
+    #reader {
+      width: 100%;
+      border-radius: 1rem;
+      overflow: hidden;
+      border: 2px solid var(--border);
+      background: #000;
+      min-height: 280px;
+    }
+    #reader video { border-radius: 1rem; }
+    .status-box {
+      border-radius: 0.75rem;
+      padding: 1rem 1.25rem;
+      font-size: 0.9375rem;
+      line-height: 1.5;
+      border: 1px solid var(--border);
+      background: var(--card);
+    }
+    .status-box.ok { border-color: var(--ok); color: var(--ok); }
+    .status-box.err { border-color: var(--err); color: #fca5a5; }
+    .status-box.busy { border-color: var(--accent); color: var(--muted); }
+    .hint { font-size: 0.8125rem; color: var(--muted); text-align: center; }
+    footer {
+      padding: 0.75rem 1rem 1.25rem;
+      text-align: center;
+      font-size: 0.75rem;
+      color: var(--muted);
+    }
+    a { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Floor scan</h1>
+    <p>Point at a job QR — task moves to this station instantly.</p>
+    <span class="station-pill" id="station-label">Loading station…</span>
+  </header>
+  <main>
+    <div id="reader"></div>
+    <div class="status-box busy" id="status">Starting camera…</div>
+    <p class="hint">QR can be the 8-character task ID or JSON with <code>task_id</code>.</p>
+  </main>
+  <footer>
+    <a href="/">Back to board</a>
+  </footer>
+
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <script>
+    const STATIONS = {
+      pre_work: "Pre-Work",
+      machining: "Machining",
+      qc: "QC",
+      dispatch: "Dispatch",
+    };
+
+    const params = new URLSearchParams(window.location.search);
+    const station = (params.get("station") || "machining").toLowerCase();
+    const statusEl = document.getElementById("status");
+    const stationLabel = document.getElementById("station-label");
+    let busy = false;
+    let scanner = null;
+
+    function setStatus(message, kind) {
+      statusEl.textContent = message;
+      statusEl.className = "status-box " + (kind || "busy");
+    }
+
+    if (!STATIONS[station]) {
+      stationLabel.textContent = "Invalid station";
+      setStatus(
+        "Add ?station=pre_work|machining|qc|dispatch to the URL.",
+        "err"
+      );
+    } else {
+      stationLabel.textContent = STATIONS[station];
+    }
+
+    async function moveTask(raw) {
+      if (busy || !STATIONS[station]) return;
+      busy = true;
+      setStatus("Updating task…", "busy");
+
+      try {
+        const res = await fetch("/api/floor/scan", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({ raw, station }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data.error || "Could not update task");
+        }
+        setStatus(
+          "✓ " + (data.job_id || data.task_id) + " → " + (data.status_label || station),
+          "ok"
+        );
+        if (navigator.vibrate) navigator.vibrate(120);
+      } catch (err) {
+        setStatus(err.message || "Scan failed", "err");
+        if (navigator.vibrate) navigator.vibrate([80, 40, 80]);
+      } finally {
+        setTimeout(() => { busy = false; }, 1200);
+      }
+    }
+
+    function onScanSuccess(decodedText) {
+      if (busy) return;
+      const text = (decodedText || "").trim();
+      if (!text) return;
+      moveTask(text);
+    }
+
+    async function startScanner() {
+      if (!STATIONS[station]) return;
+      if (!window.Html5Qrcode) {
+        setStatus("Scanner library failed to load. Check internet.", "err");
+        return;
+      }
+
+      scanner = new Html5Qrcode("reader");
+      const cameras = await Html5Qrcode.getCameras();
+      if (!cameras || cameras.length === 0) {
+        setStatus("No camera found on this device.", "err");
+        return;
+      }
+
+      const backCam =
+        cameras.find((c) => /back|rear|environment/i.test(c.label)) ||
+        cameras[cameras.length - 1];
+
+      await scanner.start(
+        backCam.id,
+        { fps: 12, qrbox: { width: 260, height: 260 }, aspectRatio: 1 },
+        onScanSuccess,
+        () => {}
+      );
+      setStatus("Ready — scan a job QR code", "busy");
+    }
+
+    startScanner().catch((err) => {
+      setStatus(
+        "Camera blocked. Use HTTPS or Chrome, and allow camera access. " +
+          (err.message || ""),
+        "err"
+      );
+    });
+
+    window.addEventListener("beforeunload", () => {
+      if (scanner && scanner.isScanning) {
+        scanner.stop().catch(() => {});
+      }
+    });
+  </script>
+</body>
+</html>

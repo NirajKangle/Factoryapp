@@ -3,6 +3,7 @@ import { ArrowDown, ArrowUp } from "lucide-react";
 
 import { AssigneeDisplay } from "@/components/ui/assignee-display";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { TaskQrCode } from "@/components/ui/task-qr-code";
 import type { Job } from "@/lib/job-status";
 import { cn } from "@/lib/utils";
 
@@ -85,7 +86,8 @@ export function JobsTable({
         <table className="w-full min-w-[760px] border-collapse text-sm">
           <thead>
             <tr className="border-b border-border bg-muted/30 text-left">
-              <th className="px-4 py-3 font-medium text-muted-foreground">Job</th>
+            <th className="px-2 py-3 font-medium text-muted-foreground">QR</th>
+            <th className="px-4 py-3 font-medium text-muted-foreground">Job</th>
               <th className="px-4 py-3 font-medium text-muted-foreground">Assignee</th>
               <th className="px-4 py-3 font-medium text-muted-foreground">Phone</th>
               <th className="px-4 py-3 font-medium text-muted-foreground">Description</th>
@@ -104,7 +106,13 @@ export function JobsTable({
                   selectedTaskId === job.task_id && "bg-primary/5"
                 )}
               >
-                <td className="px-4 py-3 font-medium text-foreground">{job.job_id}</td>
+              <td
+                className="px-2 py-2"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <TaskQrCode taskId={job.task_id} jobId={job.job_id} size={44} />
+              </td>
+              <td className="px-4 py-3 font-medium text-foreground">{job.job_id}</td>
                 <td className="px-4 py-3">
                   <AssigneeDisplay
                     name={job.assignee_name}

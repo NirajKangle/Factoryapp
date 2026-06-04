@@ -15,6 +15,8 @@ export default defineConfig({
     proxy: {
       "/api": "http://127.0.0.1:5000",
       "/jobs": "http://127.0.0.1:5000",
+      "/scan": "http://127.0.0.1:5000",
+      "/floor": "http://127.0.0.1:5000",
     },
   },
   build: {

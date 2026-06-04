@@ -2,9 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { Trash2, X } from "lucide-react";
 
 import { StatusBadge } from "@/components/ui/status-badge";
+import { TaskQrCode } from "@/components/ui/task-qr-code";
 import {
   findTeamMember,
   formatUpdatedAt,
+  getTaskScanPayload,
   PIPELINE,
   TEAM_MEMBERS,
   type Job,
@@ -127,6 +129,37 @@ export function TaskSidebar({
     await onDelete(activeJob.task_id);
   }
 
+  function printQrLabel() {
+    const printWindow = window.open("", "_blank", "width=420,height=520");
+    if (!printWindow) return;
+
+    const payload = getTaskScanPayload(activeJob.task_id, activeJob.job_id);
+    const safeTitle = activeJob.job_id
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+
+    printWindow.document.write(`<!DOCTYPE html>
+<html><head><title>${safeTitle} — QR</title>
+<style>
+  body { font-family: system-ui, sans-serif; text-align: center; padding: 24px; }
+  h1 { font-size: 1.25rem; margin-bottom: 8px; }
+  p { color: #666; font-size: 0.875rem; }
+</style>
+<script src="https://unpkg.com/qrcode@1.5.3/build/qrcode.min.js"><\/script>
+</head><body>
+<h1>${safeTitle}</h1>
+<p>Scan at a floor station to update status</p>
+<canvas id="qr"></canvas>
+<script>
+  QRCode.toCanvas(document.getElementById("qr"), ${JSON.stringify(payload)}, { width: 220, margin: 2 }, function () {
+    setTimeout(function () { window.print(); }, 400);
+  });
+<\/script>
+</body></html>`);
+    printWindow.document.close();
+  }
+
   return (
     <>
       <button
@@ -176,6 +209,31 @@ export function TaskSidebar({
 
         <div className="flex flex-1 flex-col overflow-hidden">
           <div className="flex-1 space-y-5 overflow-y-auto px-5 py-5">
+            <div className="rounded-xl border border-border bg-muted/20 p-4">
+              <p className="mb-3 text-center text-sm font-medium text-foreground">
+                Floor scan QR
+              </p>
+              <div className="flex justify-center">
+                <TaskQrCode
+                  taskId={activeJob.task_id}
+                  jobId={activeJob.job_id}
+                  size={140}
+                  label={activeJob.job_id}
+                />
+              </div>
+              <p className="mt-3 text-center text-xs text-muted-foreground">
+                Point the shop-floor scanner at this code to move the job to that
+                station&apos;s status.
+              </p>
+              <button
+                type="button"
+                onClick={printQrLabel}
+                className="mt-3 w-full rounded-lg border border-border bg-background py-2 text-sm font-medium text-foreground hover:bg-muted/40"
+              >
+                Print label
+              </button>
+            </div>
+
             <div className="space-y-1.5">
               <label htmlFor="task-job-id" className="text-sm font-medium text-foreground">
                 Job ID

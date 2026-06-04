@@ -17,6 +17,7 @@ import { AssigneeDisplay } from "@/components/ui/assignee-display";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { TaskQrCode } from "@/components/ui/task-qr-code";
 import { PIPELINE, type Job, type JobStatus } from "@/lib/job-status";
 import { cn } from "@/lib/utils";
 
@@ -46,9 +47,12 @@ function JobCardContent({ job }: { job: Job }) {
   return (
     <CardContent className="p-4">
       <div className="space-y-3">
-        <h4 className="line-clamp-2 text-base font-semibold leading-snug text-foreground">
-          {job.job_id}
-        </h4>
+        <div className="flex items-start justify-between gap-2">
+          <h4 className="line-clamp-2 flex-1 text-base font-semibold leading-snug text-foreground">
+            {job.job_id}
+          </h4>
+          <TaskQrCode taskId={job.task_id} jobId={job.job_id} size={52} />
+        </div>
 
         <AssigneeDisplay
           name={job.assignee_name}

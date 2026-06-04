@@ -1,3 +1,5 @@
+import json
+import logging
 import os
 import secrets
 import sqlite3
@@ -7,6 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from flask import Flask, jsonify, redirect, render_template, request, send_from_directory, url_for
+
+from webhooks import dispatch_status_change_async
 
 app = Flask(__name__)
 
@@ -781,7 +785,71 @@ def set_job_status(task_id, new_status):
                 ),
             )
 
-        return new_status, None
+    job = fetch_job_by_task_id(task_id)
+    if job:
+        dispatch_status_change_async(
+            task_id=task_id,
+            from_status=current_status,
+            to_status=new_status,
+            job=job_payload(job),
+            status_labels=STATUS_LABELS,
+        )
+
+    return new_status, None
+
+
+def resolve_task_id(identifier):
+    identifier = (identifier or "").strip()
+    if not identifier:
+        return None
+
+    if fetch_job_by_task_id(identifier):
+        return identifier
+
+    with get_db() as conn:
+        if DB_BACKEND == "postgres":
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT task_id FROM jobs WHERE job_id = %s",
+                    (identifier,),
+                )
+                row = cur.fetchone()
+        else:
+            row = conn.execute(
+                "SELECT task_id FROM jobs WHERE job_id = ?",
+                (identifier,),
+            ).fetchone()
+            row = (row["task_id"],) if row else None
+
+    return row[0] if row else None
+
+
+def parse_scan_raw(raw):
+    """Return (task_id, status_override) from QR text."""
+    raw = (raw or "").strip()
+    if not raw:
+        return None, None
+
+    if raw.startswith("{"):
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            return None, None
+        if isinstance(data, dict):
+            task_id = (
+                data.get("task_id")
+                or data.get("taskId")
+                or data.get("id")
+                or ""
+            )
+            task_id = str(task_id).strip()
+            status = data.get("status") or data.get("station")
+            if status:
+                status = str(status).strip().lower()
+            return (task_id or None), status
+        return None, None
+
+    return raw, None
 
 
 def move_job_status(task_id, direction=1):
@@ -863,6 +931,57 @@ def index():
         status_labels=STATUS_LABELS,
         columns=columns,
         jobs=jobs,
+    )
+
+
+@app.route("/scan")
+@app.route("/floor/scan")
+def floor_scan_page():
+    """Mobile-only QR scanner; station from ?station=machining etc."""
+    return render_template("floor-scan.html", statuses=STATUSES, status_labels=STATUS_LABELS)
+
+
+@app.route("/api/floor/scan", methods=["POST"])
+def floor_scan_move():
+    """
+    Shop-floor scan: no login. Body: { "raw": "<qr text>", "station": "qc" }.
+    station can also come from query ?station=qc.
+    """
+    payload = request.get_json(silent=True) or {}
+    raw = (payload.get("raw") or "").strip()
+    station = (
+        (payload.get("station") or request.args.get("station") or "").strip().lower()
+    )
+    explicit_task_id = (payload.get("task_id") or "").strip()
+
+    parsed_id, status_override = parse_scan_raw(raw)
+    task_id = explicit_task_id or parsed_id
+    if status_override and status_override in STATUS_ORDER:
+        station = status_override
+
+    if not task_id:
+        return jsonify({"error": "Could not read task ID from scan."}), 400
+    if station not in STATUS_ORDER:
+        return jsonify({"error": "Invalid or missing station."}), 400
+
+    resolved = resolve_task_id(task_id)
+    if not resolved:
+        return jsonify({"error": "Task not found."}), 404
+
+    _, error = set_job_status(resolved, station)
+    if error:
+        return jsonify({"error": error}), 400
+
+    job = fetch_job_by_task_id(resolved)
+    return jsonify(
+        {
+            "ok": True,
+            "task_id": resolved,
+            "job_id": job["job_id"] if job else None,
+            "status": station,
+            "status_label": STATUS_LABELS.get(station, station),
+            "job": job_payload(job) if job else None,
+        }
     )
 
 
@@ -1008,6 +1127,11 @@ def api_jobs():
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     configure_database()
     ensure_schema()
+    if os.environ.get("WEBHOOK_URL", "").strip():
+        logging.info("Status webhooks enabled for: %s", os.environ["WEBHOOK_URL"])
+    else:
+        logging.info("WEBHOOK_URL not set — status webhooks disabled")
     app.run(debug=True, host="0.0.0.0", port=5000)
