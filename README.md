@@ -6,8 +6,11 @@ Shop-floor job tracker (Flask + React) with Kanban, table view, mobile QR scanni
 
 ```powershell
 cd C:\Users\welln\Factoryapp
+pip install -r requirements.txt
 python app.py
 ```
+
+On startup the app loads `.env` (webhook URL) and can auto-start local n8n (`AUTO_START_N8N=true`).
 
 Open **http://127.0.0.1:5000** (build the UI first with `cd frontend && npm run build` if needed).
 

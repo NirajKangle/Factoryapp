@@ -47,19 +47,19 @@ Optional header: `X-Webhook-Secret` if you set `WEBHOOK_SECRET` in the environme
 
 ## Step A — Enable the webhook
 
-1. Start n8n (see Step C below) and create a **Webhook** node. Set method to **POST**, path e.g. `myfactory-status`.
-2. Click **Listen for test event** and copy the **Production URL** (local example: `http://localhost:5678/webhook/myfactory-status`).
-3. In PowerShell, before starting Flask:
+1. Copy `.env.example` to `.env` (or use the included `.env`) and set `WEBHOOK_URL` to your n8n Webhook **Production URL**.
+2. Create a **Webhook** node in n8n (POST, path e.g. `myfactory-status`) and turn the workflow **Active**.
+3. Start the app — n8n starts automatically when `AUTO_START_N8N=true` in `.env`:
 
 ```powershell
 cd C:\Users\welln\Factoryapp
-$env:WEBHOOK_URL = "http://localhost:5678/webhook/myfactory-status"
+pip install -r requirements.txt
 python app.py
 ```
 
-4. Drag a task to another column in the Kanban UI. Flask returns immediately; n8n receives the POST in a **background thread** (no UI lag).
+4. Drag a task to another column. Flask returns immediately; n8n receives the POST in a **background thread** (no UI lag).
 
-Check Flask logs for `Webhook delivered` or `Webhook failed` messages.
+Check Flask logs for `Status webhooks enabled`, `n8n is ready`, and `Webhook delivered`.
 
 ---
 

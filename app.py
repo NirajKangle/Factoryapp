@@ -10,11 +10,13 @@ from pathlib import Path
 
 from flask import Flask, jsonify, redirect, render_template, request, send_from_directory, url_for
 
+from bootstrap import ensure_n8n_running, load_dotenv_file
 from webhooks import dispatch_status_change_async
 
 app = Flask(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent
+load_dotenv_file()
 DEFAULT_SQLITE_PATH = BASE_DIR / "midc_shop.db"
 REACT_DIST = BASE_DIR / "static" / "dist"
 
@@ -1128,6 +1130,7 @@ def api_jobs():
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
+    ensure_n8n_running()
     configure_database()
     ensure_schema()
     if os.environ.get("WEBHOOK_URL", "").strip():
