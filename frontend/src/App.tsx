@@ -3,6 +3,7 @@ import KanbanBoard from "@/components/ui/kanban-board";
 import JobsTable from "@/components/ui/jobs-table";
 import TaskSidebar, { type TaskFormData } from "@/components/ui/task-sidebar";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
+import { Factory } from "lucide-react";
 import { Status, StatusIndicator, StatusLabel } from "@/components/ui/status";
 import {
   DEFAULT_ASSIGNEE,
@@ -12,6 +13,13 @@ import {
   type Job,
   type JobStatus,
 } from "@/lib/job-status";
+import { StationSetup } from "@/components/ui/station-setup";
+import {
+  getDeviceToken,
+  getWorkstationId,
+  isMobileBrowser,
+  stationHeaders,
+} from "@/lib/station";
 import { cn } from "@/lib/utils";
 
 type ViewMode = "kanban" | "table";
@@ -40,6 +48,9 @@ function App() {
   const [clientPhone, setClientPhone] = useState("");
   const [description, setDescription] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [workstationId, setWorkstationId] = useState<string | null>(() =>
+    getWorkstationId()
+  );
 
   const selectedJob = useMemo(
     () => jobs.find((job) => job.task_id === selectedTaskId) ?? null,
@@ -145,6 +156,15 @@ function App() {
     const job = jobs.find((entry) => entry.task_id === taskId);
     if (!job || job.status === targetStatus) return;
 
+    if (!getDeviceToken()) {
+      setError(
+        isMobileBrowser()
+          ? "Open the floor scan page to move jobs from your phone."
+          : "Register this PC above before dragging jobs on the board."
+      );
+      return;
+    }
+
     setError(null);
     const previousJobs = jobs;
     setJobs((current) =>
@@ -164,6 +184,7 @@ function App() {
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json",
+        ...stationHeaders(),
       },
       body: JSON.stringify({ status: targetStatus }),
     });
@@ -192,11 +213,12 @@ function App() {
       <header className="border-b border-border bg-card">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 py-4">
           <div className="flex items-center gap-3">
-            <img
-              src="/mfac-logo.png"
-              alt="MyFactory"
-              className="h-10 w-10 rounded-lg border border-border object-cover"
-            />
+            <div
+              className="flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-primary/10 text-primary"
+              aria-hidden="true"
+            >
+              <Factory className="h-6 w-6" strokeWidth={1.75} />
+            </div>
             <div>
               <h1 className="text-xl font-semibold tracking-tight text-foreground">
                 MyFactory
@@ -212,6 +234,12 @@ function App() {
             <span className="hidden text-sm text-muted-foreground sm:inline">
               {jobs.length} job{jobs.length === 1 ? "" : "s"}
             </span>
+            {workstationId && (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/40 px-3 py-1 text-sm font-semibold text-foreground">
+                <span aria-hidden="true">💻</span>
+                {workstationId}
+              </span>
+            )}
             <ThemeToggle />
           </div>
         </div>
@@ -222,6 +250,10 @@ function App() {
           <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
             {error}
           </div>
+        )}
+
+        {!workstationId && !isMobileBrowser() && (
+          <StationSetup onReady={(id) => setWorkstationId(id)} />
         )}
 
         <section className="rounded-xl border border-border bg-section-new-job p-5 shadow-sm">

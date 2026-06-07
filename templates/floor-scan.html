@@ -15,6 +15,7 @@
       --ok: #22c55e;
       --err: #ef4444;
       --accent: #3b82f6;
+      --warn: #f59e0b;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -25,70 +26,381 @@
       display: flex;
       flex-direction: column;
     }
+    .page { flex: 1; display: flex; flex-direction: column; }
+    .page[hidden] { display: none !important; }
     header {
-      padding: 1rem 1.25rem;
+      padding: 1rem 1.25rem 0.75rem;
       border-bottom: 1px solid var(--border);
       background: var(--card);
     }
-    header h1 { font-size: 1.125rem; font-weight: 600; }
-    header p { font-size: 0.8125rem; color: var(--muted); margin-top: 0.25rem; }
-    .station-pill {
-      display: inline-block;
-      margin-top: 0.5rem;
-      padding: 0.25rem 0.75rem;
-      border-radius: 999px;
-      background: var(--accent);
-      color: #fff;
-      font-size: 0.75rem;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
+    header.compact { padding-bottom: 1rem; }
+    .top-brand {
+      display: grid;
+      grid-template-columns: 2.5rem 1fr 2.5rem;
+      align-items: start;
     }
-    main { flex: 1; display: flex; flex-direction: column; padding: 1rem; gap: 1rem; }
-    #reader {
+    .logo-wrap {
+      width: 2.5rem;
+      height: 2.5rem;
+      color: var(--accent);
+    }
+    .logo-wrap svg { width: 100%; height: 100%; }
+    .title-block {
+      text-align: center;
+      grid-column: 2;
+    }
+    .title-block h1 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    .title-block .subtitle {
+      font-size: 0.875rem;
+      color: var(--muted);
+      margin-top: 0.125rem;
+    }
+    .device-section {
+      margin-top: 0.75rem;
+      text-align: center;
+    }
+    .device-name { display: flex; justify-content: center; }
+    .device-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.4rem 1rem;
+      border-radius: 999px;
+      background: rgba(59, 130, 246, 0.14);
+      border: 1px solid var(--border);
+      font-size: 0.9375rem;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .device-emoji { font-size: 1.05rem; line-height: 1; }
+    .station-pill-wrap {
+      display: flex;
+      justify-content: center;
+      margin-top: 0.75rem;
+    }
+    .station-pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.4rem 1.1rem;
+      border-radius: 999px;
+      font-size: 0.9375rem;
+      font-weight: 700;
+      color: #fff;
+      letter-spacing: 0.01em;
+    }
+    main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      padding: 1rem;
+      gap: 1rem;
+    }
+    .status-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.75rem;
+    }
+    .status-grid h2 {
+      grid-column: 1 / -1;
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: var(--muted);
+      text-align: center;
+      margin-bottom: 0.25rem;
+    }
+    .status-btn {
+      border: none;
+      color: #fff;
+      border-radius: 999px;
+      padding: 1.1rem 0.75rem;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.12s, filter 0.12s;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+    }
+    .status-btn:active {
+      transform: scale(0.97);
+      filter: brightness(1.08);
+    }
+    .scan-viewport {
       width: 100%;
       border-radius: 1rem;
-      overflow: hidden;
       border: 2px solid var(--border);
-      background: #000;
-      min-height: 280px;
+      background: var(--card);
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      padding: 1rem;
     }
-    #reader video { border-radius: 1rem; }
-    .status-box {
+    .scan-heading {
+      text-align: center;
+      font-size: 1.125rem;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .scan-frame {
+      position: relative;
+      flex: 1;
+      min-height: 280px;
       border-radius: 0.75rem;
-      padding: 1rem 1.25rem;
+      border: 2px dashed var(--border);
+      overflow: hidden;
+      background: #000;
+    }
+    #reader { width: 100%; min-height: 280px; }
+    #reader video { border-radius: 0.75rem; }
+    #success-overlay {
+      position: absolute;
+      inset: 0;
+      z-index: 2;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 1rem;
+      padding: 1.5rem;
+      background: linear-gradient(160deg, #052e16 0%, #09090b 55%);
+      text-align: center;
+      animation: fadeIn 0.25s ease-out;
+    }
+    #success-overlay.warn {
+      background: linear-gradient(160deg, #422006 0%, #09090b 55%);
+    }
+    #success-overlay[hidden] { display: none !important; }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: scale(0.96); }
+      to { opacity: 1; transform: scale(1); }
+    }
+    .check-ring {
+      width: 88px;
+      height: 88px;
+      border-radius: 50%;
+      background: rgba(34, 197, 94, 0.15);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      animation: popIn 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    .check-ring.warn { background: rgba(245, 158, 11, 0.15); }
+    @keyframes popIn {
+      0% { transform: scale(0.2); opacity: 0; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+    .check-svg { width: 52px; height: 52px; }
+    .check-circle {
+      stroke: var(--ok);
+      stroke-width: 3;
+      fill: none;
+      stroke-dasharray: 166;
+      stroke-dashoffset: 166;
+      animation: drawCircle 0.5s ease forwards 0.1s;
+    }
+    .check-mark {
+      stroke: var(--ok);
+      stroke-width: 4;
+      fill: none;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      stroke-dasharray: 48;
+      stroke-dashoffset: 48;
+      animation: drawCheck 0.35s ease forwards 0.55s;
+    }
+    .check-circle.warn, .check-mark.warn { stroke: var(--warn); }
+    @keyframes drawCircle { to { stroke-dashoffset: 0; } }
+    @keyframes drawCheck { to { stroke-dashoffset: 0; } }
+    .success-job {
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .success-transition {
       font-size: 0.9375rem;
+      color: var(--muted);
       line-height: 1.5;
+      max-width: 260px;
+    }
+    .success-transition strong { color: var(--text); font-weight: 600; }
+    .success-arrow {
+      display: inline-block;
+      margin: 0 0.35rem;
+      color: var(--ok);
+      font-weight: 700;
+    }
+    #error-toast {
+      border-radius: 0.75rem;
+      padding: 0.75rem 1rem;
+      font-size: 0.875rem;
+      line-height: 1.4;
+      border: 1px solid var(--err);
+      background: rgba(239, 68, 68, 0.12);
+      color: #fca5a5;
+      text-align: center;
+    }
+    #error-toast[hidden] { display: none !important; }
+    .panel {
+      border-radius: 0.75rem;
+      padding: 1rem;
       border: 1px solid var(--border);
       background: var(--card);
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
     }
-    .status-box.ok { border-color: var(--ok); color: var(--ok); }
-    .status-box.err { border-color: var(--err); color: #fca5a5; }
-    .status-box.busy { border-color: var(--accent); color: var(--muted); }
-    .hint { font-size: 0.8125rem; color: var(--muted); text-align: center; }
+    .panel label {
+      font-size: 0.75rem;
+      color: var(--muted);
+      display: block;
+      margin-bottom: 0.25rem;
+    }
+    .panel input {
+      width: 100%;
+      border-radius: 0.5rem;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      padding: 0.5rem 0.75rem;
+      font-size: 0.875rem;
+    }
+    .timing-row { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+    .timing-row button, .panel button.primary {
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      border-radius: 0.5rem;
+      padding: 0.4rem 0.75rem;
+      font-size: 0.75rem;
+      cursor: pointer;
+    }
+    .timing-row button.active, .panel button.primary {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #fff;
+    }
     footer {
       padding: 0.75rem 1rem 1.25rem;
       text-align: center;
       font-size: 0.75rem;
       color: var(--muted);
     }
-    a { color: var(--accent); }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
-  <header>
-    <h1>Floor scan</h1>
-    <p>Point at a job QR — task moves to this station instantly.</p>
-    <span class="station-pill" id="station-label">Loading station…</span>
-  </header>
-  <main>
-    <div id="reader"></div>
-    <div class="status-box busy" id="status">Starting camera…</div>
-    <p class="hint">QR can be the 8-character task ID or JSON with <code>task_id</code>.</p>
-  </main>
-  <footer>
-    <a href="/">Back to board</a>
-  </footer>
+  <!-- Step 1: register device + pick station -->
+  <div class="page" id="home-page">
+    <header>
+      <div class="top-brand">
+        <div class="logo-wrap" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M2 20h20"/>
+            <path d="M5 20V10l5-4v14"/>
+            <path d="M12 20V6l5 3.5V20"/>
+            <path d="M19 20V9l3-2v13"/>
+            <path d="M9 13h1"/>
+            <path d="M16 13h1"/>
+          </svg>
+        </div>
+        <div class="title-block">
+          <h1>MyFactory</h1>
+          <p class="subtitle">Floor scan</p>
+        </div>
+      </div>
+      <div class="device-section">
+        <div class="panel" id="setup-panel" hidden>
+          <p style="font-size:0.875rem; color: var(--muted);">
+            One-time setup — name this phone (e.g. Raj-Phone).
+          </p>
+          <div>
+            <label for="ws-id">This phone</label>
+            <input id="ws-id" type="text" placeholder="Raj-Phone" />
+          </div>
+          <button type="button" class="primary" id="ws-register">Register this phone</button>
+        </div>
+        <div class="device-name" id="device-name" hidden>
+          <span class="device-pill">
+            <span class="device-emoji" aria-hidden="true">📱</span>
+            <span id="device-name-text"></span>
+          </span>
+        </div>
+      </div>
+    </header>
+    <main>
+      <div class="status-grid" id="status-grid" hidden>
+        <h2>Select your station</h2>
+        <button type="button" class="status-btn" data-station="pre_work">Pre-Work</button>
+        <button type="button" class="status-btn" data-station="machining">Machining</button>
+        <button type="button" class="status-btn" data-station="qc">QC</button>
+        <button type="button" class="status-btn" data-station="dispatch">Dispatch</button>
+      </div>
+      <div id="home-error-toast" hidden role="alert"></div>
+    </main>
+    <footer>
+      <a href="/">Back to board</a>
+    </footer>
+  </div>
+
+  <!-- Step 2: scan QR at chosen station -->
+  <div class="page" id="scan-page" hidden>
+    <header class="compact">
+      <div class="top-brand">
+        <div class="logo-wrap" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M2 20h20"/>
+            <path d="M5 20V10l5-4v14"/>
+            <path d="M12 20V6l5 3.5V20"/>
+            <path d="M19 20V9l3-2v13"/>
+            <path d="M9 13h1"/>
+            <path d="M16 13h1"/>
+          </svg>
+        </div>
+        <div class="title-block">
+          <h1>MyFactory</h1>
+        </div>
+      </div>
+      <div class="station-pill-wrap">
+        <span class="station-pill" id="station-label">Machining</span>
+      </div>
+    </header>
+    <main>
+      <div class="scan-viewport">
+        <h2 class="scan-heading">Scan a QR</h2>
+        <div class="scan-frame" id="scan-frame">
+          <div id="reader"></div>
+          <div id="success-overlay" hidden>
+            <div class="check-ring" id="check-ring">
+              <svg class="check-svg" viewBox="0 0 52 52" aria-hidden="true">
+                <circle class="check-circle" cx="26" cy="26" r="24" />
+                <path class="check-mark" d="M14 27 L22 35 L38 17" />
+              </svg>
+            </div>
+            <p class="success-job" id="success-job"></p>
+            <p class="success-transition" id="success-transition"></p>
+          </div>
+        </div>
+      </div>
+      <div class="panel" id="timing-panel">
+        <div>
+          <label>When did work start?</label>
+          <div class="timing-row" id="timing-buttons">
+            <button type="button" data-start="now" class="active">Just started</button>
+            <button type="button" data-start="30m_ago">30m ago</button>
+            <button type="button" data-start="60m_ago">60m ago</button>
+          </div>
+        </div>
+      </div>
+      <div id="scan-error-toast" hidden role="alert"></div>
+    </main>
+    <footer>
+      <a href="/scan">Change station</a>
+    </footer>
+  </div>
 
   <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
   <script>
@@ -99,53 +411,317 @@
       dispatch: "Dispatch",
     };
 
+    const STATION_COLORS = {
+      pre_work: "#6366f1",
+      machining: "#f59e0b",
+      qc: "#10b981",
+      dispatch: "#22c55e",
+    };
+
+    const TOKEN_KEY = "mfac_device_token";
+    const WS_KEY = "mfac_workstation_id";
+    const SUCCESS_DISPLAY_MS = 2800;
+
     const params = new URLSearchParams(window.location.search);
-    const station = (params.get("station") || "machining").toLowerCase();
-    const statusEl = document.getElementById("status");
+    const stationParam = (params.get("station") || "").trim().toLowerCase();
+    const station = STATIONS[stationParam] ? stationParam : null;
+    const isScanPage = !!station;
+
+    const homePage = document.getElementById("home-page");
+    const scanPage = document.getElementById("scan-page");
+    const homeErrorToast = document.getElementById("home-error-toast");
+    const scanErrorToast = document.getElementById("scan-error-toast");
     const stationLabel = document.getElementById("station-label");
+    const setupPanel = document.getElementById("setup-panel");
+    const statusGrid = document.getElementById("status-grid");
+    const deviceNameEl = document.getElementById("device-name");
+    const deviceNameTextEl = document.getElementById("device-name-text");
+    const wsIdInput = document.getElementById("ws-id");
+    const readerEl = document.getElementById("reader");
+    const successOverlay = document.getElementById("success-overlay");
+    const successJobEl = document.getElementById("success-job");
+    const successTransitionEl = document.getElementById("success-transition");
+    const checkRingEl = document.getElementById("check-ring");
+
+    let operationalStart = "now";
+    let deviceToken = localStorage.getItem(TOKEN_KEY);
+    let workstationId = localStorage.getItem(WS_KEY);
     let busy = false;
     let scanner = null;
+    let resumeTimer = null;
+    let errorTimer = null;
 
-    function setStatus(message, kind) {
-      statusEl.textContent = message;
-      statusEl.className = "status-box " + (kind || "busy");
+    function errorToastEl() {
+      return isScanPage ? scanErrorToast : homeErrorToast;
     }
 
-    if (!STATIONS[station]) {
-      stationLabel.textContent = "Invalid station";
-      setStatus(
-        "Add ?station=pre_work|machining|qc|dispatch to the URL.",
-        "err"
-      );
-    } else {
-      stationLabel.textContent = STATIONS[station];
+    function showError(message) {
+      const el = errorToastEl();
+      if (!message) {
+        el.hidden = true;
+        return;
+      }
+      el.textContent = message;
+      el.hidden = false;
+      if (errorTimer) clearTimeout(errorTimer);
+      errorTimer = setTimeout(() => {
+        el.hidden = true;
+      }, 5000);
+    }
+
+    function persistSession(token, wsId) {
+      deviceToken = token;
+      workstationId = wsId;
+      localStorage.setItem(TOKEN_KEY, token);
+      localStorage.setItem(WS_KEY, wsId);
+    }
+
+    function clearSession() {
+      deviceToken = null;
+      localStorage.removeItem(TOKEN_KEY);
+    }
+
+    function updateHomeDeviceSection() {
+      if (!deviceToken) {
+        setupPanel.hidden = false;
+        deviceNameEl.hidden = true;
+        statusGrid.hidden = true;
+        if (workstationId) wsIdInput.value = workstationId;
+        return;
+      }
+      setupPanel.hidden = true;
+      deviceNameEl.hidden = false;
+      deviceNameTextEl.textContent = workstationId || "Registered phone";
+      statusGrid.hidden = false;
+    }
+
+    function applyStationButtonColors() {
+      document.querySelectorAll(".status-btn").forEach((btn) => {
+        const key = btn.getAttribute("data-station");
+        const color = STATION_COLORS[key];
+        if (color) btn.style.backgroundColor = color;
+      });
+    }
+
+    function setStationPill(el, stationKey) {
+      el.textContent = STATIONS[stationKey];
+      el.style.backgroundColor = STATION_COLORS[stationKey] || "#64748b";
+    }
+
+    applyStationButtonColors();
+
+    async function validateToken(token) {
+      const headers = token ? { "X-Device-Token": token } : {};
+      const res = await fetch("/api/devices/me", {
+        headers,
+        credentials: "same-origin",
+      });
+      if (!res.ok) return null;
+      const data = await res.json().catch(() => ({}));
+      return data.device_id || null;
+    }
+
+    async function restoreSessionFromServer(wsId) {
+      const res = await fetch("/api/devices/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ device_id: wsId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.device_token) return false;
+      persistSession(data.device_token, data.device_id);
+      return true;
+    }
+
+    async function bootstrapDeviceSession() {
+      const savedToken = localStorage.getItem(TOKEN_KEY);
+      const savedWsId = localStorage.getItem(WS_KEY);
+      workstationId = savedWsId;
+
+      if (savedToken) {
+        try {
+          const wsId = await validateToken(savedToken);
+          if (wsId) {
+            persistSession(savedToken, wsId);
+            return true;
+          }
+        } catch (_) {}
+        clearSession();
+      }
+
+      try {
+        const wsId = await validateToken(null);
+        if (wsId) {
+          workstationId = wsId;
+          localStorage.setItem(WS_KEY, workstationId);
+          deviceToken = "cookie";
+          return true;
+        }
+      } catch (_) {}
+
+      if (savedWsId) {
+        try {
+          if (await restoreSessionFromServer(savedWsId)) return true;
+        } catch (_) {}
+      }
+
+      deviceToken = null;
+      return false;
+    }
+
+    function goToStation(statusKey) {
+      if (!deviceToken) {
+        showError("Register this phone first.");
+        return;
+      }
+      window.location.href = "/scan?station=" + encodeURIComponent(statusKey);
+    }
+
+    document.getElementById("ws-register").addEventListener("click", async () => {
+      const id = (wsIdInput.value || "").trim();
+      if (!id) {
+        showError("Enter a name for this phone (e.g. Raj-Phone).");
+        return;
+      }
+      showError("");
+      try {
+        const res = await fetch("/api/devices/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          credentials: "same-origin",
+          body: JSON.stringify({ device_id: id }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || "Registration failed");
+        persistSession(data.device_token, data.device_id);
+        updateHomeDeviceSection();
+      } catch (err) {
+        showError(err.message || "Registration failed");
+      }
+    });
+
+    document.querySelectorAll(".status-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        goToStation(btn.getAttribute("data-station"));
+      });
+    });
+
+    document.getElementById("timing-buttons").addEventListener("click", (event) => {
+      const btn = event.target.closest("button[data-start]");
+      if (!btn) return;
+      operationalStart = btn.getAttribute("data-start");
+      document.querySelectorAll("#timing-buttons button").forEach((el) => {
+        el.classList.toggle("active", el === btn);
+      });
+    });
+
+    async function stopScanner() {
+      if (scanner && scanner.isScanning) {
+        try { await scanner.stop(); } catch (_) {}
+      }
+      if (scanner) {
+        try { scanner.clear(); } catch (_) {}
+      }
+      readerEl.style.visibility = "hidden";
+    }
+
+    function replayCheckAnimation() {
+      const circle = successOverlay.querySelector(".check-circle");
+      const mark = successOverlay.querySelector(".check-mark");
+      circle.style.animation = "none";
+      mark.style.animation = "none";
+      checkRingEl.style.animation = "none";
+      void successOverlay.offsetWidth;
+      circle.style.animation = "";
+      mark.style.animation = "";
+      checkRingEl.style.animation = "";
+    }
+
+    function showResultOverlay(data) {
+      const unchanged = !!data.unchanged;
+      const fromLabel = data.from_status_label || data.from_status || "—";
+      const toLabel = data.to_status_label || data.to_status || STATIONS[station];
+
+      successOverlay.classList.toggle("warn", unchanged);
+      checkRingEl.classList.toggle("warn", unchanged);
+      successOverlay.querySelectorAll(".check-circle, .check-mark").forEach((el) => {
+        el.classList.toggle("warn", unchanged);
+      });
+
+      successJobEl.textContent = data.job_id || data.task_id || "Job";
+      if (unchanged) {
+        successTransitionEl.innerHTML =
+          "Already at <strong>" + toLabel + "</strong> — no change made.";
+      } else {
+        successTransitionEl.innerHTML =
+          "Moved from <strong>" + fromLabel + "</strong>" +
+          '<span class="success-arrow">→</span>' +
+          "<strong>" + toLabel + "</strong>";
+      }
+
+      replayCheckAnimation();
+      successOverlay.hidden = false;
+      showError("");
+    }
+
+    function hideResultOverlay() {
+      successOverlay.hidden = true;
+      readerEl.style.visibility = "";
+    }
+
+    async function resumeScannerAfterDelay() {
+      if (resumeTimer) clearTimeout(resumeTimer);
+      resumeTimer = setTimeout(async () => {
+        hideResultOverlay();
+        busy = false;
+        try {
+          await startScanner();
+        } catch (err) {
+          showError(
+            "Camera blocked. Use HTTPS and allow camera access. " + (err.message || "")
+          );
+        }
+      }, SUCCESS_DISPLAY_MS);
     }
 
     async function moveTask(raw) {
-      if (busy || !STATIONS[station]) return;
+      if (busy || !station || !deviceToken) return;
       busy = true;
-      setStatus("Updating task…", "busy");
+      showError("");
 
       try {
+        await stopScanner();
+
+        const scanHeaders = {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        };
+        if (deviceToken && deviceToken !== "cookie") {
+          scanHeaders["X-Device-Token"] = deviceToken;
+        }
         const res = await fetch("/api/floor/scan", {
           method: "POST",
-          headers: { "Content-Type": "application/json", Accept: "application/json" },
-          body: JSON.stringify({ raw, station }),
+          headers: scanHeaders,
+          credentials: "same-origin",
+          body: JSON.stringify({
+            raw,
+            station,
+            operational_start: operationalStart,
+          }),
         });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          throw new Error(data.error || "Could not update task");
-        }
-        setStatus(
-          "✓ " + (data.job_id || data.task_id) + " → " + (data.status_label || station),
-          "ok"
-        );
-        if (navigator.vibrate) navigator.vibrate(120);
+        if (!res.ok) throw new Error(data.error || "Could not update task");
+
+        showResultOverlay(data);
+        if (navigator.vibrate && !data.unchanged) navigator.vibrate(120);
+        await resumeScannerAfterDelay();
       } catch (err) {
-        setStatus(err.message || "Scan failed", "err");
+        hideResultOverlay();
+        busy = false;
+        showError(err.message || "Scan failed");
         if (navigator.vibrate) navigator.vibrate([80, 40, 80]);
-      } finally {
-        setTimeout(() => { busy = false; }, 1200);
+        try { await startScanner(); } catch (_) {}
       }
     }
 
@@ -157,16 +733,20 @@
     }
 
     async function startScanner() {
-      if (!STATIONS[station]) return;
+      if (!station || !deviceToken) return;
       if (!window.Html5Qrcode) {
-        setStatus("Scanner library failed to load. Check internet.", "err");
+        showError("Scanner library failed to load. Check internet.");
         return;
       }
 
-      scanner = new Html5Qrcode("reader");
+      hideResultOverlay();
+      showError("");
+
+      if (!scanner) scanner = new Html5Qrcode("reader");
+
       const cameras = await Html5Qrcode.getCameras();
       if (!cameras || cameras.length === 0) {
-        setStatus("No camera found on this device.", "err");
+        showError("No camera found on this device.");
         return;
       }
 
@@ -174,22 +754,42 @@
         cameras.find((c) => /back|rear|environment/i.test(c.label)) ||
         cameras[cameras.length - 1];
 
-      await scanner.start(
-        backCam.id,
-        { fps: 12, qrbox: { width: 260, height: 260 }, aspectRatio: 1 },
-        onScanSuccess,
-        () => {}
-      );
-      setStatus("Ready — scan a job QR code", "busy");
+      if (!scanner.isScanning) {
+        await scanner.start(
+          backCam.id,
+          { fps: 12, qrbox: { width: 260, height: 260 }, aspectRatio: 1 },
+          onScanSuccess,
+          () => {}
+        );
+      }
     }
 
-    startScanner().catch((err) => {
-      setStatus(
-        "Camera blocked. Use HTTPS or Chrome, and allow camera access. " +
-          (err.message || ""),
-        "err"
-      );
-    });
+    if (isScanPage) {
+      homePage.hidden = true;
+      scanPage.hidden = false;
+      setStationPill(stationLabel, station);
+
+      bootstrapDeviceSession().then((ready) => {
+        if (!ready) {
+          window.location.replace("/scan");
+          return;
+        }
+        startScanner().catch((err) => {
+          showError(
+            "Camera blocked. Use HTTPS and allow camera access. " + (err.message || "")
+          );
+        });
+      });
+    } else {
+      homePage.hidden = false;
+      scanPage.hidden = true;
+      setupPanel.hidden = true;
+      statusGrid.hidden = true;
+
+      bootstrapDeviceSession().then(() => {
+        updateHomeDeviceSection();
+      });
+    }
 
     window.addEventListener("beforeunload", () => {
       if (scanner && scanner.isScanning) {

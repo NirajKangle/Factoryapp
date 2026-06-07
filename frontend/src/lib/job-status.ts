@@ -7,16 +7,26 @@ export interface TeamMember {
   photo: string;
 }
 
+export type TrackingMode = "unit" | "progress" | "checklist";
+
 export interface Job {
   task_id: string;
   job_id: string;
   client_phone: string;
+  client_email?: string;
   description: string;
   status: JobStatus;
   status_label: string;
   author: string;
   assignee_name: string;
   assignee_photo: string;
+  total_requested_quantity?: number;
+  good_parts_count?: number;
+  scrap_parts_count?: number;
+  operator_id?: string;
+  tracking_mode?: TrackingMode;
+  progress_percent?: number;
+  operations_checklist?: unknown[];
   created_at: string;
   updated_at: string;
 }

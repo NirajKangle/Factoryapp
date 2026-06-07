@@ -8,7 +8,6 @@ import os
 import threading
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -26,7 +25,9 @@ def webhook_urls() -> list[str]:
 
 def build_status_change_payload(
     *,
-    task_id: str,
+    batch_id: str,
+    device_name: str | None,
+    operator_id: str | None,
     from_status: str | None,
     to_status: str,
     job: dict[str, Any],
@@ -34,14 +35,13 @@ def build_status_change_payload(
 ) -> dict[str, Any]:
     return {
         "event": "task.status_changed",
-        "task_id": task_id,
-        "from_status": from_status,
-        "from_status_label": status_labels.get(from_status or "", from_status),
-        "to_status": to_status,
-        "to_status_label": status_labels.get(to_status, to_status),
+        "batch_id": batch_id,
+        "device_name": device_name,
+        "operator_id": operator_id,
+        "old_status": from_status,
+        "new_status": to_status,
         "customer_phone": job.get("client_phone"),
-        "job": job,
-        "changed_at": datetime.now(timezone.utc).isoformat(),
+        "customer_email": job.get("client_email") or "",
     }
 
 
@@ -75,18 +75,22 @@ def _deliver(payload: dict[str, Any]) -> None:
 
 def dispatch_status_change_async(
     *,
-    task_id: str,
+    batch_id: str,
     from_status: str | None,
     to_status: str,
     job: dict[str, Any],
     status_labels: dict[str, str],
+    device_name: str | None = None,
+    operator_id: str | None = None,
 ) -> None:
     """Queue webhook POST on a background thread so the API/UI never waits on n8n."""
     if not webhook_urls():
         return
 
     payload = build_status_change_payload(
-        task_id=task_id,
+        batch_id=batch_id,
+        device_name=device_name,
+        operator_id=operator_id,
         from_status=from_status,
         to_status=to_status,
         job=job,
@@ -95,7 +99,7 @@ def dispatch_status_change_async(
     thread = threading.Thread(
         target=_deliver,
         args=(payload,),
-        name=f"webhook-{task_id}",
+        name=f"webhook-{batch_id}",
         daemon=True,
     )
     thread.start()

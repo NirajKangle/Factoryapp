@@ -5,12 +5,13 @@ import secrets
 import sqlite3
 import string
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from flask import Flask, jsonify, redirect, render_template, request, send_from_directory, url_for
 
 from bootstrap import ensure_n8n_running, load_dotenv_file
+from station_auth import DEVICE_TOKEN_COOKIE, extract_device_token, generate_device_token
 from webhooks import dispatch_status_change_async
 
 app = Flask(__name__)
@@ -147,6 +148,7 @@ def migrate_sqlite_schema(conn):
         if sqlite_table_exists(conn, "status_history"):
             conn.execute("DROP TABLE IF EXISTS status_history")
         migrate_job_people_columns(conn)
+        migrate_mes_schema(conn)
         return
 
     legacy_jobs = [
@@ -201,13 +203,16 @@ def migrate_sqlite_schema(conn):
         );
 
         CREATE TABLE status_update_history (
-          id            INTEGER PRIMARY KEY AUTOINCREMENT,
           task_id       TEXT NOT NULL REFERENCES jobs (task_id) ON DELETE CASCADE,
           from_status   TEXT CHECK (
                           from_status IS NULL OR from_status IN ({VALID_STATUSES})
                         ),
           to_status     TEXT NOT NULL CHECK (to_status IN ({VALID_STATUSES})),
-          changed_at    TEXT NOT NULL DEFAULT (datetime('now'))
+          changed_at    TEXT NOT NULL DEFAULT (datetime('now')),
+          recorded_at   TEXT,
+          operational_start_time TEXT,
+          device_name   TEXT,
+          operator_id   TEXT
         );
 
         CREATE INDEX idx_jobs_status ON jobs (status);
@@ -309,6 +314,305 @@ def migrate_job_people_columns(conn):
     )
 
 
+TRACKING_MODES = ("unit", "progress", "checklist")
+
+
+def migrate_devices_table(conn):
+    if DB_BACKEND == "postgres":
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1 FROM information_schema.tables
+                WHERE table_name = 'workstations'
+                """
+            )
+            if cur.fetchone():
+                cur.execute(
+                    """
+                    SELECT 1 FROM information_schema.tables
+                    WHERE table_name = 'devices'
+                    """
+                )
+                if cur.fetchone() is None:
+                    cur.execute("ALTER TABLE workstations RENAME TO devices")
+
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS devices (
+                  device_name   TEXT PRIMARY KEY,
+                  device_token  TEXT NOT NULL UNIQUE,
+                  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+                """
+            )
+            cur.execute(
+                """
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = 'devices'
+                """
+            )
+            device_cols = {row[0] for row in cur.fetchall()}
+            if "station_status" in device_cols:
+                cur.execute("ALTER TABLE devices DROP COLUMN station_status")
+            if "workstation_id" in device_cols and "device_name" not in device_cols:
+                cur.execute(
+                    "ALTER TABLE devices RENAME COLUMN workstation_id TO device_name"
+                )
+        return
+
+    if sqlite_table_exists(conn, "workstations") and not sqlite_table_exists(conn, "devices"):
+        conn.execute("ALTER TABLE workstations RENAME TO devices")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS devices (
+          device_name   TEXT PRIMARY KEY,
+          device_token  TEXT NOT NULL UNIQUE,
+          created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    device_columns = sqlite_columns(conn, "devices")
+    if "station_status" in device_columns:
+        conn.execute("ALTER TABLE devices DROP COLUMN station_status")
+    if "workstation_id" in device_columns and "device_name" not in device_columns:
+        conn.execute("ALTER TABLE devices RENAME COLUMN workstation_id TO device_name")
+
+
+def migrate_status_history_schema(conn):
+    if DB_BACKEND == "postgres":
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = 'status_update_history'
+                """
+            )
+            cols = {row[0] for row in cur.fetchall()}
+            if not cols:
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS status_update_history (
+                      task_id       TEXT NOT NULL REFERENCES jobs (task_id) ON DELETE CASCADE,
+                      from_status   job_status,
+                      to_status     job_status NOT NULL,
+                      changed_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+                      recorded_at   TIMESTAMPTZ,
+                      operational_start_time TIMESTAMPTZ,
+                      device_name   TEXT,
+                      operator_id   TEXT
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_status_update_history_task_id_changed_at
+                    ON status_update_history (task_id, changed_at DESC)
+                    """
+                )
+                return
+            if "id" not in cols and "device_name" in cols:
+                return
+
+            cur.execute(
+                "ALTER TABLE status_update_history RENAME TO _status_update_history_legacy"
+            )
+            cur.execute(
+                """
+                CREATE TABLE status_update_history (
+                  task_id       TEXT NOT NULL REFERENCES jobs (task_id) ON DELETE CASCADE,
+                  from_status   job_status,
+                  to_status     job_status NOT NULL,
+                  changed_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+                  recorded_at   TIMESTAMPTZ,
+                  operational_start_time TIMESTAMPTZ,
+                  device_name   TEXT,
+                  operator_id   TEXT
+                )
+                """
+            )
+            legacy_device = (
+                "workstation_id"
+                if "workstation_id" in cols
+                else ("device_name" if "device_name" in cols else "NULL")
+            )
+            recorded = "recorded_at" if "recorded_at" in cols else "changed_at"
+            operational = (
+                "operational_start_time"
+                if "operational_start_time" in cols
+                else "NULL"
+            )
+            operator = "operator_id" if "operator_id" in cols else "NULL"
+            cur.execute(
+                f"""
+                INSERT INTO status_update_history (
+                  task_id, from_status, to_status, changed_at,
+                  recorded_at, operational_start_time, device_name, operator_id
+                )
+                SELECT task_id, from_status, to_status, changed_at,
+                       {recorded}, {operational}, {legacy_device}, {operator}
+                FROM _status_update_history_legacy
+                """
+            )
+            cur.execute("DROP TABLE _status_update_history_legacy")
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_status_update_history_task_id_changed_at
+                ON status_update_history (task_id, changed_at DESC)
+                """
+            )
+        return
+
+    if not sqlite_table_exists(conn, "status_update_history"):
+        conn.executescript(
+            f"""
+            CREATE TABLE IF NOT EXISTS status_update_history (
+              task_id       TEXT NOT NULL REFERENCES jobs (task_id) ON DELETE CASCADE,
+              from_status   TEXT CHECK (
+                              from_status IS NULL OR from_status IN ({VALID_STATUSES})
+                            ),
+              to_status     TEXT NOT NULL CHECK (to_status IN ({VALID_STATUSES})),
+              changed_at    TEXT NOT NULL DEFAULT (datetime('now')),
+              recorded_at   TEXT,
+              operational_start_time TEXT,
+              device_name   TEXT,
+              operator_id   TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_status_update_history_task_id_changed_at
+              ON status_update_history (task_id, changed_at DESC);
+            """
+        )
+        return
+
+    cols = sqlite_columns(conn, "status_update_history")
+    if "id" not in cols and "device_name" in cols:
+        return
+
+    legacy_device = (
+        "workstation_id"
+        if "workstation_id" in cols
+        else ("device_name" if "device_name" in cols else "NULL")
+    )
+    recorded = "recorded_at" if "recorded_at" in cols else "changed_at"
+    operational = (
+        "operational_start_time" if "operational_start_time" in cols else "NULL"
+    )
+    operator = "operator_id" if "operator_id" in cols else "NULL"
+
+    conn.execute("ALTER TABLE status_update_history RENAME TO _status_update_history_legacy")
+    conn.executescript(
+        f"""
+        CREATE TABLE status_update_history (
+          task_id       TEXT NOT NULL REFERENCES jobs (task_id) ON DELETE CASCADE,
+          from_status   TEXT CHECK (
+                          from_status IS NULL OR from_status IN ({VALID_STATUSES})
+                        ),
+          to_status     TEXT NOT NULL CHECK (to_status IN ({VALID_STATUSES})),
+          changed_at    TEXT NOT NULL DEFAULT (datetime('now')),
+          recorded_at   TEXT,
+          operational_start_time TEXT,
+          device_name   TEXT,
+          operator_id   TEXT
+        );
+        INSERT INTO status_update_history (
+          task_id, from_status, to_status, changed_at,
+          recorded_at, operational_start_time, device_name, operator_id
+        )
+        SELECT task_id, from_status, to_status, changed_at,
+               {recorded}, {operational}, {legacy_device}, {operator}
+        FROM _status_update_history_legacy;
+        DROP TABLE _status_update_history_legacy;
+        CREATE INDEX IF NOT EXISTS idx_status_update_history_task_id_changed_at
+          ON status_update_history (task_id, changed_at DESC);
+        """
+    )
+
+
+def migrate_mes_schema(conn):
+    if DB_BACKEND == "postgres":
+        with conn.cursor() as cur:
+            migrate_devices_table(conn)
+            cur.execute(
+                """
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = 'jobs'
+                """
+            )
+            job_cols = {row[0] for row in cur.fetchall()}
+            job_additions = {
+                "total_requested_quantity": "INTEGER NOT NULL DEFAULT 1",
+                "good_parts_count": "INTEGER NOT NULL DEFAULT 0",
+                "scrap_parts_count": "INTEGER NOT NULL DEFAULT 0",
+                "operator_id": "TEXT NOT NULL DEFAULT ''",
+                "client_email": "TEXT NOT NULL DEFAULT ''",
+                "tracking_mode": "TEXT NOT NULL DEFAULT 'unit'",
+                "progress_percent": "INTEGER NOT NULL DEFAULT 0",
+                "operations_checklist": "TEXT NOT NULL DEFAULT '[]'",
+            }
+            for name, typedef in job_additions.items():
+                if name not in job_cols:
+                    cur.execute(f"ALTER TABLE jobs ADD COLUMN {name} {typedef}")
+
+            cur.execute(
+                """
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = 'status_update_history'
+                """
+            )
+            hist_cols = {row[0] for row in cur.fetchall()}
+            if "recorded_at" not in hist_cols:
+                cur.execute(
+                    "ALTER TABLE status_update_history ADD COLUMN recorded_at TIMESTAMPTZ"
+                )
+                cur.execute(
+                    "UPDATE status_update_history SET recorded_at = changed_at "
+                    "WHERE recorded_at IS NULL"
+                )
+            for name, typedef in {
+                "operational_start_time": "TIMESTAMPTZ",
+                "operator_id": "TEXT",
+            }.items():
+                if name not in hist_cols:
+                    cur.execute(
+                        f"ALTER TABLE status_update_history ADD COLUMN {name} {typedef}"
+                    )
+            if "device_name" not in hist_cols and "workstation_id" not in hist_cols:
+                cur.execute(
+                    "ALTER TABLE status_update_history ADD COLUMN device_name TEXT"
+                )
+            migrate_status_history_schema(conn)
+        return
+
+    migrate_devices_table(conn)
+    columns = sqlite_columns(conn, "jobs")
+    for name, typedef in {
+        "total_requested_quantity": "INTEGER NOT NULL DEFAULT 1",
+        "good_parts_count": "INTEGER NOT NULL DEFAULT 0",
+        "scrap_parts_count": "INTEGER NOT NULL DEFAULT 0",
+        "operator_id": "TEXT NOT NULL DEFAULT ''",
+        "client_email": "TEXT NOT NULL DEFAULT ''",
+        "tracking_mode": "TEXT NOT NULL DEFAULT 'unit'",
+        "progress_percent": "INTEGER NOT NULL DEFAULT 0",
+        "operations_checklist": "TEXT NOT NULL DEFAULT '[]'",
+    }.items():
+        if name not in columns:
+            conn.execute(f"ALTER TABLE jobs ADD COLUMN {name} {typedef}")
+
+    hist_columns = sqlite_columns(conn, "status_update_history")
+    if "recorded_at" not in hist_columns:
+        conn.execute(
+            "ALTER TABLE status_update_history ADD COLUMN recorded_at TEXT"
+        )
+        conn.execute(
+            "UPDATE status_update_history SET recorded_at = changed_at "
+            "WHERE recorded_at IS NULL"
+        )
+    for name in ("operational_start_time", "operator_id"):
+        if name not in hist_columns:
+            conn.execute(f"ALTER TABLE status_update_history ADD COLUMN {name} TEXT")
+    migrate_status_history_schema(conn)
+
+
 def migrate_postgres_job_people_columns(conn):
     with conn.cursor() as cur:
         cur.execute(
@@ -390,11 +694,14 @@ def ensure_schema():
                 cur.execute(
                     """
                     CREATE TABLE IF NOT EXISTS status_update_history (
-                      id            BIGSERIAL PRIMARY KEY,
                       task_id       TEXT NOT NULL REFERENCES jobs (task_id) ON DELETE CASCADE,
                       from_status   job_status,
                       to_status     job_status NOT NULL,
-                      changed_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+                      changed_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+                      recorded_at   TIMESTAMPTZ,
+                      operational_start_time TIMESTAMPTZ,
+                      device_name   TEXT,
+                      operator_id   TEXT
                     )
                     """
                 )
@@ -434,6 +741,7 @@ def ensure_schema():
                         )
                     cur.execute("DROP TABLE jobs_legacy")
                 migrate_postgres_job_people_columns(conn)
+                migrate_mes_schema(conn)
         return
 
     with get_db() as conn:
@@ -454,13 +762,16 @@ def ensure_schema():
             );
 
             CREATE TABLE IF NOT EXISTS status_update_history (
-              id            INTEGER PRIMARY KEY AUTOINCREMENT,
               task_id       TEXT NOT NULL REFERENCES jobs (task_id) ON DELETE CASCADE,
               from_status   TEXT CHECK (
                               from_status IS NULL OR from_status IN ({VALID_STATUSES})
                             ),
               to_status     TEXT NOT NULL CHECK (to_status IN ({VALID_STATUSES})),
-              changed_at    TEXT NOT NULL DEFAULT (datetime('now'))
+              changed_at    TEXT NOT NULL DEFAULT (datetime('now')),
+              recorded_at   TEXT,
+              operational_start_time TEXT,
+              device_name   TEXT,
+              operator_id   TEXT
             );
 
             CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs (status);
@@ -471,6 +782,125 @@ def ensure_schema():
         )
         migrate_sqlite_schema(conn)
         migrate_job_people_columns(conn)
+        migrate_mes_schema(conn)
+
+
+def parse_operational_start(value):
+    now = datetime.now(timezone.utc)
+    if value is None:
+        return now
+    preset = str(value).strip().lower()
+    if not preset or preset == "now":
+        return now
+    if preset == "30m_ago":
+        return now - timedelta(minutes=30)
+    if preset == "60m_ago":
+        return now - timedelta(minutes=60)
+    parsed = as_datetime(value)
+    return parsed if parsed else now
+
+
+def register_device(device_name):
+    device_name = device_name.strip()
+    if not device_name:
+        return None, "device_id is required."
+
+    with get_db() as conn:
+        if DB_BACKEND == "postgres":
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT device_token FROM devices WHERE device_name = %s",
+                    (device_name,),
+                )
+                row = cur.fetchone()
+                if row:
+                    return {
+                        "device_name": device_name,
+                        "device_token": row[0],
+                    }, None
+        else:
+            row = conn.execute(
+                "SELECT device_token FROM devices WHERE device_name = ?",
+                (device_name,),
+            ).fetchone()
+            if row:
+                return {
+                    "device_name": device_name,
+                    "device_token": row["device_token"],
+                }, None
+
+        device_token = generate_device_token()
+        if DB_BACKEND == "postgres":
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO devices (device_name, device_token)
+                    VALUES (%s, %s)
+                    """,
+                    (device_name, device_token),
+                )
+        else:
+            conn.execute(
+                """
+                INSERT INTO devices (device_name, device_token)
+                VALUES (?, ?)
+                """,
+                (device_name, device_token),
+            )
+
+    return {
+        "device_name": device_name,
+        "device_token": device_token,
+    }, None
+
+
+def fetch_device_by_token(device_token):
+    with get_db() as conn:
+        if DB_BACKEND == "postgres":
+            import psycopg2.extras
+
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT device_name, device_token, created_at
+                    FROM devices WHERE device_token = %s
+                    """,
+                    (device_token,),
+                )
+                row = cur.fetchone()
+        else:
+            row = conn.execute(
+                """
+                SELECT device_name, device_token, created_at
+                FROM devices WHERE device_token = ?
+                """,
+                (device_token,),
+            ).fetchone()
+            row = dict(row) if row else None
+    return dict(row) if row else None
+
+
+def require_device():
+    payload = request.get_json(silent=True) or {}
+    token = extract_device_token(request.headers, payload, request.cookies)
+    if not token:
+        return None, (jsonify({"error": "Device token required."}), 401)
+    device = fetch_device_by_token(token)
+    if not device:
+        return None, (jsonify({"error": "Invalid device token."}), 401)
+    return device, None
+
+
+def parse_checklist(value):
+    if isinstance(value, list):
+        return value
+    if not value:
+        return []
+    try:
+        parsed = json.loads(value)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    return parsed if isinstance(parsed, list) else []
 
 
 def row_to_job(row):
@@ -479,10 +909,18 @@ def row_to_job(row):
         "task_id": job["task_id"],
         "job_id": job["job_id"],
         "client_phone": job["client_phone"],
+        "client_email": job.get("client_email") or "",
         "description": job.get("description") or "",
         "author": job.get("author") or DEFAULT_AUTHOR_NAME,
         "assignee_name": job.get("assignee_name") or DEFAULT_ASSIGNEE_NAME,
         "assignee_photo": job.get("assignee_photo") or DEFAULT_ASSIGNEE_PHOTO,
+        "total_requested_quantity": int(job.get("total_requested_quantity") or 1),
+        "good_parts_count": int(job.get("good_parts_count") or 0),
+        "scrap_parts_count": int(job.get("scrap_parts_count") or 0),
+        "operator_id": job.get("operator_id") or "",
+        "tracking_mode": job.get("tracking_mode") or "unit",
+        "progress_percent": int(job.get("progress_percent") or 0),
+        "operations_checklist": parse_checklist(job.get("operations_checklist")),
         "status": job["status"],
         "status_label": STATUS_LABELS.get(job["status"], job["status"]),
         "created_at": as_datetime(job["created_at"]),
@@ -491,8 +929,10 @@ def row_to_job(row):
 
 
 JOB_SELECT_COLUMNS = (
-    "task_id, job_id, client_phone, description, author, "
-    "assignee_name, assignee_photo, status, created_at, updated_at"
+    "task_id, job_id, client_phone, client_email, description, author, "
+    "assignee_name, assignee_photo, total_requested_quantity, good_parts_count, "
+    "scrap_parts_count, operator_id, tracking_mode, progress_percent, "
+    "operations_checklist, status, created_at, updated_at"
 )
 
 
@@ -559,65 +999,86 @@ def create_job(
     author=None,
     assignee_name=None,
     assignee_photo=None,
+    total_requested_quantity=1,
+    client_email="",
+    tracking_mode="unit",
 ):
     author = author or DEFAULT_AUTHOR_NAME
     assignee_name = assignee_name or DEFAULT_ASSIGNEE_NAME
     assignee_photo = assignee_photo or DEFAULT_ASSIGNEE_PHOTO
+    tracking_mode = tracking_mode if tracking_mode in TRACKING_MODES else "unit"
+    total_requested_quantity = max(1, int(total_requested_quantity or 1))
 
     with get_db() as conn:
         task_id = generate_task_id(conn)
+        recorded_at = datetime.now(timezone.utc)
         if DB_BACKEND == "postgres":
             with conn.cursor() as cur:
                 cur.execute(
                     """
                     INSERT INTO jobs (
-                      task_id, job_id, client_phone, description,
-                      author, assignee_name, assignee_photo, status
+                      task_id, job_id, client_phone, client_email, description,
+                      author, assignee_name, assignee_photo,
+                      total_requested_quantity, tracking_mode, status
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, 'pre_work')
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pre_work')
                     """,
                     (
                         task_id,
                         job_id,
                         client_phone,
+                        client_email or "",
                         description or "",
                         author,
                         assignee_name,
                         assignee_photo,
+                        total_requested_quantity,
+                        tracking_mode,
                     ),
                 )
                 cur.execute(
                     """
-                    INSERT INTO status_update_history (task_id, from_status, to_status)
-                    VALUES (%s, NULL, 'pre_work')
+                    INSERT INTO status_update_history (
+                      task_id, from_status, to_status, changed_at,
+                      recorded_at, operational_start_time
+                    )
+                    VALUES (%s, NULL, 'pre_work', %s, %s, %s)
                     """,
-                    (task_id,),
+                    (task_id, recorded_at, recorded_at, recorded_at),
                 )
         else:
+            ts = recorded_at.isoformat()
             conn.execute(
                 """
                 INSERT INTO jobs (
-                  task_id, job_id, client_phone, description,
-                  author, assignee_name, assignee_photo, status
+                  task_id, job_id, client_phone, client_email, description,
+                  author, assignee_name, assignee_photo,
+                  total_requested_quantity, tracking_mode, status
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'pre_work')
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pre_work')
                 """,
                 (
                     task_id,
                     job_id,
                     client_phone,
+                    client_email or "",
                     description or "",
                     author,
                     assignee_name,
                     assignee_photo,
+                    total_requested_quantity,
+                    tracking_mode,
                 ),
             )
             conn.execute(
                 """
-                INSERT INTO status_update_history (task_id, from_status, to_status)
-                VALUES (?, NULL, 'pre_work')
+                INSERT INTO status_update_history (
+                  task_id, from_status, to_status, changed_at,
+                  recorded_at, operational_start_time
+                )
+                VALUES (?, NULL, 'pre_work', ?, ?, ?)
                 """,
-                (task_id,),
+                (task_id, ts, ts, ts),
             )
         return task_id
 
@@ -626,9 +1087,17 @@ def update_job(
     task_id,
     job_id=None,
     client_phone=None,
+    client_email=None,
     description=None,
     assignee_name=None,
     assignee_photo=None,
+    total_requested_quantity=None,
+    good_parts_count=None,
+    scrap_parts_count=None,
+    operator_id=None,
+    tracking_mode=None,
+    progress_percent=None,
+    operations_checklist=None,
 ):
     fields = []
     values = []
@@ -661,6 +1130,44 @@ def update_job(
     if assignee_photo is not None:
         fields.append("assignee_photo")
         values.append(assignee_photo.strip())
+
+    if client_email is not None:
+        fields.append("client_email")
+        values.append(client_email.strip())
+
+    if total_requested_quantity is not None:
+        fields.append("total_requested_quantity")
+        values.append(max(1, int(total_requested_quantity)))
+
+    if good_parts_count is not None:
+        fields.append("good_parts_count")
+        values.append(max(0, int(good_parts_count)))
+
+    if scrap_parts_count is not None:
+        fields.append("scrap_parts_count")
+        values.append(max(0, int(scrap_parts_count)))
+
+    if operator_id is not None:
+        fields.append("operator_id")
+        values.append(operator_id.strip())
+
+    if tracking_mode is not None:
+        if tracking_mode not in TRACKING_MODES:
+            return None, "Invalid tracking_mode."
+        fields.append("tracking_mode")
+        values.append(tracking_mode)
+
+    if progress_percent is not None:
+        fields.append("progress_percent")
+        values.append(min(100, max(0, int(progress_percent))))
+
+    if operations_checklist is not None:
+        fields.append("operations_checklist")
+        values.append(
+            json.dumps(operations_checklist)
+            if isinstance(operations_checklist, list)
+            else operations_checklist
+        )
 
     if not fields:
         return fetch_job_by_task_id(task_id), None
@@ -716,9 +1223,19 @@ def delete_job(task_id):
     return True
 
 
-def set_job_status(task_id, new_status):
+def set_job_status(
+    task_id,
+    new_status,
+    *,
+    device_name=None,
+    operator_id=None,
+    operational_start=None,
+):
     if new_status not in STATUS_ORDER:
         return None, "Invalid status."
+
+    recorded_at = datetime.now(timezone.utc)
+    operational_start_time = parse_operational_start(operational_start)
 
     with get_db() as conn:
         if DB_BACKEND == "postgres":
@@ -742,59 +1259,96 @@ def set_job_status(task_id, new_status):
         if current_status == new_status:
             return new_status, None
 
-        changed_at = datetime.now(timezone.utc)
-
         if DB_BACKEND == "postgres":
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    UPDATE jobs
-                    SET status = %s, updated_at = %s
-                    WHERE task_id = %s
-                    """,
-                    (new_status, changed_at, task_id),
-                )
+                if operator_id:
+                    cur.execute(
+                        """
+                        UPDATE jobs
+                        SET status = %s, updated_at = %s, operator_id = %s
+                        WHERE task_id = %s
+                        """,
+                        (new_status, recorded_at, operator_id, task_id),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        UPDATE jobs
+                        SET status = %s, updated_at = %s
+                        WHERE task_id = %s
+                        """,
+                        (new_status, recorded_at, task_id),
+                    )
                 cur.execute(
                     """
                     INSERT INTO status_update_history (
-                      task_id, from_status, to_status, changed_at
+                      task_id, from_status, to_status, changed_at,
+                      recorded_at, operational_start_time, device_name, operator_id
                     )
-                    VALUES (%s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     """,
-                    (task_id, current_status, new_status, changed_at),
+                    (
+                        task_id,
+                        current_status,
+                        new_status,
+                        recorded_at,
+                        recorded_at,
+                        operational_start_time,
+                        device_name,
+                        operator_id,
+                    ),
                 )
         else:
-            conn.execute(
-                """
-                UPDATE jobs
-                SET status = ?, updated_at = ?
-                WHERE task_id = ?
-                """,
-                (new_status, changed_at.isoformat(), task_id),
-            )
+            ts = recorded_at.isoformat()
+            op_ts = operational_start_time.isoformat()
+            if operator_id:
+                conn.execute(
+                    """
+                    UPDATE jobs
+                    SET status = ?, updated_at = ?, operator_id = ?
+                    WHERE task_id = ?
+                    """,
+                    (new_status, ts, operator_id, task_id),
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE jobs
+                    SET status = ?, updated_at = ?
+                    WHERE task_id = ?
+                    """,
+                    (new_status, ts, task_id),
+                )
             conn.execute(
                 """
                 INSERT INTO status_update_history (
-                  task_id, from_status, to_status, changed_at
+                  task_id, from_status, to_status, changed_at,
+                  recorded_at, operational_start_time, device_name, operator_id
                 )
-                VALUES (?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     task_id,
                     current_status,
                     new_status,
-                    changed_at.isoformat(),
+                    ts,
+                    ts,
+                    op_ts,
+                    device_name,
+                    operator_id,
                 ),
             )
 
     job = fetch_job_by_task_id(task_id)
     if job:
         dispatch_status_change_async(
-            task_id=task_id,
+            batch_id=task_id,
             from_status=current_status,
             to_status=new_status,
             job=job_payload(job),
             status_labels=STATUS_LABELS,
+            device_name=device_name,
+            operator_id=operator_id or job.get("operator_id"),
         )
 
     return new_status, None
@@ -905,10 +1459,18 @@ def job_payload(job):
         "task_id": job["task_id"],
         "job_id": job["job_id"],
         "client_phone": job["client_phone"],
+        "client_email": job.get("client_email") or "",
         "description": job["description"],
         "author": job["author"],
         "assignee_name": job["assignee_name"],
         "assignee_photo": job["assignee_photo"],
+        "total_requested_quantity": job.get("total_requested_quantity", 1),
+        "good_parts_count": job.get("good_parts_count", 0),
+        "scrap_parts_count": job.get("scrap_parts_count", 0),
+        "operator_id": job.get("operator_id") or "",
+        "tracking_mode": job.get("tracking_mode") or "unit",
+        "progress_percent": job.get("progress_percent", 0),
+        "operations_checklist": job.get("operations_checklist") or [],
         "status": job["status"],
         "status_label": job["status_label"],
         "created_at": job["created_at"].isoformat(),
@@ -943,12 +1505,52 @@ def floor_scan_page():
     return render_template("floor-scan.html", statuses=STATUSES, status_labels=STATUS_LABELS)
 
 
+@app.route("/api/devices/register", methods=["POST"])
+def api_register_device():
+    payload = request.get_json(silent=True) or {}
+    device_id = (payload.get("device_id") or "").strip()
+    result, error = register_device(device_id)
+    if error:
+        return jsonify({"error": error}), 400
+    response = jsonify(
+        {
+            "device_id": result["device_name"],
+            "device_token": result["device_token"],
+        }
+    )
+    response.status_code = 201
+    response.set_cookie(
+        DEVICE_TOKEN_COOKIE,
+        result["device_token"],
+        max_age=60 * 60 * 24 * 365,
+        samesite="Lax",
+        secure=request.is_secure,
+    )
+    return response
+
+
+@app.route("/api/devices/me", methods=["GET"])
+def api_device_me():
+    token = extract_device_token(request.headers, {}, request.cookies)
+    if not token:
+        return jsonify({"error": "Device token required."}), 401
+    device = fetch_device_by_token(token)
+    if not device:
+        return jsonify({"error": "Invalid device token."}), 401
+    return jsonify({"device_id": device["device_name"]})
+
+
 @app.route("/api/floor/scan", methods=["POST"])
 def floor_scan_move():
     """
-    Shop-floor scan: no login. Body: { "raw": "<qr text>", "station": "qc" }.
-    station can also come from query ?station=qc.
+    Shop-floor scan: device token required.
+    Body: { "raw": "<qr text>", "station": "qc", "operator_id": "BADGE-1",
+            "operational_start": "30m_ago" }.
     """
+    device, auth_error = require_device()
+    if auth_error:
+        return auth_error
+
     payload = request.get_json(silent=True) or {}
     raw = (payload.get("raw") or "").strip()
     station = (
@@ -970,7 +1572,42 @@ def floor_scan_move():
     if not resolved:
         return jsonify({"error": "Task not found."}), 404
 
-    _, error = set_job_status(resolved, station)
+    job_before = fetch_job_by_task_id(resolved)
+    if not job_before:
+        return jsonify({"error": "Task not found."}), 404
+
+    from_status = job_before["status"]
+    from_label = STATUS_LABELS.get(from_status, from_status)
+    to_label = STATUS_LABELS.get(station, station)
+
+    if from_status == station:
+        return jsonify(
+            {
+                "ok": True,
+                "unchanged": True,
+                "task_id": resolved,
+                "job_id": job_before["job_id"],
+                "from_status": from_status,
+                "from_status_label": from_label,
+                "to_status": station,
+                "to_status_label": to_label,
+                "device_name": device["device_name"],
+            }
+        )
+
+    # Phone registration name doubles as operator identity on the floor.
+    operator_id = (
+        (payload.get("operator_id") or "").strip()
+        or device["device_name"]
+    )
+    operational_start = payload.get("operational_start")
+    _, error = set_job_status(
+        resolved,
+        station,
+        device_name=device["device_name"],
+        operator_id=operator_id,
+        operational_start=operational_start,
+    )
     if error:
         return jsonify({"error": error}), 400
 
@@ -978,10 +1615,18 @@ def floor_scan_move():
     return jsonify(
         {
             "ok": True,
+            "unchanged": False,
             "task_id": resolved,
+            "batch_id": resolved,
+            "device_name": device["device_name"],
+            "operator_id": operator_id,
             "job_id": job["job_id"] if job else None,
+            "from_status": from_status,
+            "from_status_label": from_label,
+            "to_status": station,
+            "to_status_label": to_label,
             "status": station,
-            "status_label": STATUS_LABELS.get(station, station),
+            "status_label": to_label,
             "job": job_payload(job) if job else None,
         }
     )
@@ -1051,9 +1696,17 @@ def job_detail(task_id):
         for key in (
             "job_id",
             "client_phone",
+            "client_email",
             "description",
             "assignee_name",
             "assignee_photo",
+            "total_requested_quantity",
+            "good_parts_count",
+            "scrap_parts_count",
+            "operator_id",
+            "tracking_mode",
+            "progress_percent",
+            "operations_checklist",
         )
     )
 
@@ -1064,6 +1717,9 @@ def job_detail(task_id):
             client_phone=payload.get("client_phone")
             if "client_phone" in payload
             else None,
+            client_email=payload.get("client_email")
+            if "client_email" in payload
+            else None,
             description=payload.get("description")
             if "description" in payload
             else None,
@@ -1072,6 +1728,27 @@ def job_detail(task_id):
             else None,
             assignee_photo=payload.get("assignee_photo")
             if "assignee_photo" in payload
+            else None,
+            total_requested_quantity=payload.get("total_requested_quantity")
+            if "total_requested_quantity" in payload
+            else None,
+            good_parts_count=payload.get("good_parts_count")
+            if "good_parts_count" in payload
+            else None,
+            scrap_parts_count=payload.get("scrap_parts_count")
+            if "scrap_parts_count" in payload
+            else None,
+            operator_id=payload.get("operator_id")
+            if "operator_id" in payload
+            else None,
+            tracking_mode=payload.get("tracking_mode")
+            if "tracking_mode" in payload
+            else None,
+            progress_percent=payload.get("progress_percent")
+            if "progress_percent" in payload
+            else None,
+            operations_checklist=payload.get("operations_checklist")
+            if "operations_checklist" in payload
             else None,
         )
         if error:
@@ -1093,10 +1770,21 @@ def job_detail(task_id):
 
 @app.route("/jobs/<task_id>/move", methods=["POST"])
 def move_job(task_id):
+    device, auth_error = require_device()
+    if auth_error:
+        return auth_error
+
     payload = request.get_json(silent=True) or {}
     new_status = (request.form.get("status") or payload.get("status") or "").strip()
+    operator_id = (payload.get("operator_id") or "").strip() or None
 
-    _, error = set_job_status(task_id, new_status)
+    _, error = set_job_status(
+        task_id,
+        new_status,
+        device_name=device["device_name"],
+        operator_id=operator_id,
+        operational_start=payload.get("operational_start"),
+    )
     if error:
         return jsonify({"error": error}), 400
     return jsonify({"ok": True, "status": new_status})

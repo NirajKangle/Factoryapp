@@ -26,20 +26,32 @@ export interface TaskSidebarProps {
 export interface TaskFormData {
   job_id: string;
   client_phone: string;
+  client_email: string;
   description: string;
   status: JobStatus;
   assignee_name: string;
   assignee_photo: string;
+  total_requested_quantity: number;
+  good_parts_count: number;
+  scrap_parts_count: number;
+  tracking_mode: "unit" | "progress" | "checklist";
+  progress_percent: number;
 }
 
 function toFormData(job: Job): TaskFormData {
   return {
     job_id: job.job_id,
     client_phone: job.client_phone,
+    client_email: job.client_email ?? "",
     description: job.description ?? "",
     status: job.status,
     assignee_name: job.assignee_name,
     assignee_photo: job.assignee_photo,
+    total_requested_quantity: job.total_requested_quantity ?? 1,
+    good_parts_count: job.good_parts_count ?? 0,
+    scrap_parts_count: job.scrap_parts_count ?? 0,
+    tracking_mode: job.tracking_mode ?? "unit",
+    progress_percent: job.progress_percent ?? 0,
   };
 }
 
@@ -261,6 +273,107 @@ export function TaskSidebar({
                 className="w-full rounded-lg border border-input bg-background px-3 py-2.5 text-sm text-foreground"
               />
             </div>
+
+            <div className="space-y-1.5">
+              <label htmlFor="task-email" className="text-sm font-medium text-foreground">
+                Client email
+              </label>
+              <input
+                id="task-email"
+                type="email"
+                value={form.client_email}
+                onChange={(e) => updateField("client_email", e.target.value)}
+                className="w-full rounded-lg border border-input bg-background px-3 py-2.5 text-sm text-foreground"
+              />
+            </div>
+
+            <div className="grid grid-cols-3 gap-3">
+              <div className="space-y-1.5">
+                <label htmlFor="task-qty" className="text-sm font-medium text-foreground">
+                  Batch qty
+                </label>
+                <input
+                  id="task-qty"
+                  type="number"
+                  min={1}
+                  value={form.total_requested_quantity}
+                  onChange={(e) =>
+                    updateField("total_requested_quantity", Number(e.target.value) || 1)
+                  }
+                  className="w-full rounded-lg border border-input bg-background px-3 py-2.5 text-sm text-foreground"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label htmlFor="task-good" className="text-sm font-medium text-foreground">
+                  Good
+                </label>
+                <input
+                  id="task-good"
+                  type="number"
+                  min={0}
+                  value={form.good_parts_count}
+                  onChange={(e) =>
+                    updateField("good_parts_count", Number(e.target.value) || 0)
+                  }
+                  className="w-full rounded-lg border border-input bg-background px-3 py-2.5 text-sm text-foreground"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label htmlFor="task-scrap" className="text-sm font-medium text-foreground">
+                  Scrap
+                </label>
+                <input
+                  id="task-scrap"
+                  type="number"
+                  min={0}
+                  value={form.scrap_parts_count}
+                  onChange={(e) =>
+                    updateField("scrap_parts_count", Number(e.target.value) || 0)
+                  }
+                  className="w-full rounded-lg border border-input bg-background px-3 py-2.5 text-sm text-foreground"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label htmlFor="task-tracking" className="text-sm font-medium text-foreground">
+                Tracking mode
+              </label>
+              <select
+                id="task-tracking"
+                value={form.tracking_mode}
+                onChange={(e) =>
+                  updateField(
+                    "tracking_mode",
+                    e.target.value as TaskFormData["tracking_mode"]
+                  )
+                }
+                className="w-full rounded-lg border border-input bg-background px-3 py-2.5 text-sm text-foreground"
+              >
+                <option value="unit">Per-unit (QR)</option>
+                <option value="progress">Progress %</option>
+                <option value="checklist">Operations checklist</option>
+              </select>
+            </div>
+
+            {form.tracking_mode === "progress" && (
+              <div className="space-y-1.5">
+                <label htmlFor="task-progress" className="text-sm font-medium text-foreground">
+                  Progress %
+                </label>
+                <input
+                  id="task-progress"
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={form.progress_percent}
+                  onChange={(e) =>
+                    updateField("progress_percent", Number(e.target.value) || 0)
+                  }
+                  className="w-full rounded-lg border border-input bg-background px-3 py-2.5 text-sm text-foreground"
+                />
+              </div>
+            )}
 
             <div className="space-y-1.5">
               <label htmlFor="task-assignee" className="text-sm font-medium text-foreground">
