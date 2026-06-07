@@ -235,12 +235,7 @@ function App() {
             <span className="hidden text-sm text-muted-foreground sm:inline">
               {jobs.length} job{jobs.length === 1 ? "" : "s"}
             </span>
-            {workstationId && (
-              <DeviceMenu
-                currentDeviceId={workstationId}
-                onSwitch={(id) => setWorkstationId(id)}
-              />
-            )}
+            {workstationId && <DeviceMenu currentDeviceId={workstationId} />}
             <ThemeToggle />
           </div>
         </div>
