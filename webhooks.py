@@ -47,7 +47,7 @@ def build_status_change_payload(
 
 def _post_json(url: str, payload: dict[str, Any]) -> None:
     body = json.dumps(payload, default=str).encode("utf-8")
-    headers = {"Content-Type": "application/json", "User-Agent": "MyFactory/1.0"}
+    headers = {"Content-Type": "application/json", "User-Agent": "Werqr/1.0"}
     if WEBHOOK_SECRET:
         headers["X-Webhook-Secret"] = WEBHOOK_SECRET
 

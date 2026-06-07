@@ -12,7 +12,7 @@ def generate_device_token() -> str:
     return secrets.token_urlsafe(DEVICE_TOKEN_BYTES)
 
 
-DEVICE_TOKEN_COOKIE = "mfac_device_token"
+DEVICE_TOKEN_COOKIE = "werqr_device_token"
 
 
 def extract_device_token(

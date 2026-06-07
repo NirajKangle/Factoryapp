@@ -1,5 +1,5 @@
-const TOKEN_KEY = "mfac_device_token";
-const WORKSTATION_KEY = "mfac_workstation_id";
+const TOKEN_KEY = "werqr_device_token";
+const WORKSTATION_KEY = "werqr_device_id";
 
 export function getDeviceToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);

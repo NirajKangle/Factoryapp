@@ -1,4 +1,4 @@
-# MyFactory → n8n automation
+# Werqr → n8n automation
 
 This guide covers the status-change webhook, the floor QR scanner, and your first n8n workflow.
 
@@ -26,7 +26,7 @@ Sent to every URL in `WEBHOOK_URL` (comma-separated for multiple targets):
   "customer_phone": "+9762306281",
   "job": {
     "task_id": "We47cSkC",
-    "job_id": "BMIDC",
+    "job_id": "WERQR-001",
     "client_phone": "+9762306281",
     "description": "",
     "author": "Shop Floor",
@@ -48,7 +48,7 @@ Optional header: `X-Webhook-Secret` if you set `WEBHOOK_SECRET` in the environme
 ## Step A — Enable the webhook
 
 1. Copy `.env.example` to `.env` (or use the included `.env`) and set `WEBHOOK_URL` to your n8n Webhook **Production URL**.
-2. Create a **Webhook** node in n8n (POST, path e.g. `myfactory-status`) and turn the workflow **Active**.
+2. Create a **Webhook** node in n8n (POST, path e.g. `werqr-status`) and turn the workflow **Active**.
 3. Start the app — n8n starts automatically when `AUTO_START_N8N=true` in `.env`:
 
 ```powershell
@@ -126,7 +126,7 @@ Open **http://localhost:5678** and create an account (local only).
 
 1. **Webhook** node  
    - HTTP Method: `POST`  
-   - Path: `myfactory-status`  
+   - Path: `werqr-status`  
    - Response: “Immediately” / 200 OK  
 
 2. **Set** node (optional, for WhatsApp/email templates)  
@@ -147,7 +147,7 @@ Open **http://localhost:5678** and create an account (local only).
 
 1. n8n workflow **Active**, Webhook listening.  
 2. Flask running with `WEBHOOK_URL` set.  
-3. Drag a card in MyFactory → n8n execution appears → email/WhatsApp step runs.  
+3. Drag a card in Werqr → n8n execution appears → email/WhatsApp step runs.  
 4. Scan a QR on `/scan?station=…` → status updates **and** the same webhook fires.
 
 ### Troubleshooting
@@ -165,7 +165,7 @@ Open **http://localhost:5678** and create an account (local only).
 
 | Variable | Example | Purpose |
 |----------|---------|---------|
-| `WEBHOOK_URL` | `http://localhost:5678/webhook/myfactory-status` | n8n (or Zapier) ingest URL(s), comma-separated |
+| `WEBHOOK_URL` | `http://localhost:5678/webhook/werqr-status` | n8n (or Zapier) ingest URL(s), comma-separated |
 | `WEBHOOK_SECRET` | `my-secret` | Sent as `X-Webhook-Secret` header |
 | `WEBHOOK_TIMEOUT_SEC` | `5` | Max seconds per outbound request |
 

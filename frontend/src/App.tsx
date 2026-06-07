@@ -221,7 +221,7 @@ function App() {
             </div>
             <div>
               <h1 className="text-xl font-semibold tracking-tight text-foreground">
-                MyFactory
+                Werqr
               </h1>
               <p className="text-sm text-muted-foreground">Shop floor job tracker</p>
             </div>

@@ -18,7 +18,16 @@ app = Flask(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv_file()
-DEFAULT_SQLITE_PATH = BASE_DIR / "midc_shop.db"
+DEFAULT_SQLITE_PATH = BASE_DIR / "werqr.db"
+LEGACY_SQLITE_PATH = BASE_DIR / "midc_shop.db"
+
+
+def resolve_sqlite_path() -> Path:
+    if DEFAULT_SQLITE_PATH.exists():
+        return DEFAULT_SQLITE_PATH
+    if LEGACY_SQLITE_PATH.exists():
+        return LEGACY_SQLITE_PATH
+    return DEFAULT_SQLITE_PATH
 REACT_DIST = BASE_DIR / "static" / "dist"
 
 STATUSES = [
@@ -55,7 +64,7 @@ def resolve_db_config():
         return "postgres", database_url
     if database_url.startswith("sqlite:///"):
         return "sqlite", database_url.removeprefix("sqlite:///")
-    return "sqlite", str(DEFAULT_SQLITE_PATH)
+    return "sqlite", str(resolve_sqlite_path())
 
 
 def as_datetime(value):

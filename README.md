@@ -1,4 +1,4 @@
-# MyFactory
+# Werqr
 
 Shop-floor job tracker (Flask + React) with Kanban, table view, mobile QR scanning, and n8n webhooks.
 

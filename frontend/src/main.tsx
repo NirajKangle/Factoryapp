@@ -4,7 +4,7 @@ import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./index.css";
 
-const storedTheme = localStorage.getItem("midc-theme");
+const storedTheme = localStorage.getItem("werqr-theme");
 document.documentElement.classList.add(
   storedTheme === "light" ? "light" : "dark"
 );
