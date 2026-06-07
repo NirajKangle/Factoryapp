@@ -29,6 +29,13 @@ def resolve_sqlite_path() -> Path:
         return LEGACY_SQLITE_PATH
     return DEFAULT_SQLITE_PATH
 REACT_DIST = BASE_DIR / "static" / "dist"
+TEAM_UPLOADS_DIR = BASE_DIR / "static" / "uploads" / "team"
+ALLOWED_TEAM_PHOTO_TYPES = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+}
+MAX_TEAM_PHOTO_BYTES = 5 * 1024 * 1024
 
 STATUSES = [
     ("pre_work", "Pre-Work"),
@@ -56,6 +63,27 @@ DEFAULT_ASSIGNEE_PHOTO = os.environ.get(
     "DEFAULT_ASSIGNEE_PHOTO",
     "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=100&h=100&q=80",
 ).strip()
+
+DEFAULT_TEAM_JOB_TITLE = "Operator"
+
+DEFAULT_TEAM_MEMBERS = [
+    (
+        "Alex Chen",
+        "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=100&h=100&q=80",
+    ),
+    (
+        "Priya Sharma",
+        "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=100&h=100&q=80",
+    ),
+    (
+        "Marcus Webb",
+        "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=100&h=100&q=80",
+    ),
+    (
+        "Elena Rossi",
+        "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?auto=format&fit=crop&w=100&h=100&q=80",
+    ),
+]
 
 
 def resolve_db_config():
@@ -751,6 +779,7 @@ def ensure_schema():
                     cur.execute("DROP TABLE jobs_legacy")
                 migrate_postgres_job_people_columns(conn)
                 migrate_mes_schema(conn)
+                migrate_team_members(conn)
         return
 
     with get_db() as conn:
@@ -792,6 +821,109 @@ def ensure_schema():
         migrate_sqlite_schema(conn)
         migrate_job_people_columns(conn)
         migrate_mes_schema(conn)
+        migrate_team_members(conn)
+
+
+def migrate_team_members(conn):
+    if DB_BACKEND == "postgres":
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS team_members (
+                  member_id   SERIAL PRIMARY KEY,
+                  name          TEXT NOT NULL UNIQUE,
+                  photo         TEXT NOT NULL DEFAULT '',
+                  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+                """
+            )
+            cur.execute("SELECT COUNT(*) FROM team_members")
+            if cur.fetchone()[0] == 0:
+                for name, photo in DEFAULT_TEAM_MEMBERS:
+                    cur.execute(
+                        """
+                        INSERT INTO team_members (name, photo)
+                        VALUES (%s, %s)
+                        ON CONFLICT (name) DO NOTHING
+                        """,
+                        (name, photo),
+                    )
+            ensure_team_member_modified_at_column(conn)
+            ensure_team_member_job_title_column(conn)
+        return
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS team_members (
+          member_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+          name          TEXT NOT NULL UNIQUE,
+          photo         TEXT NOT NULL DEFAULT '',
+          created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    count = conn.execute("SELECT COUNT(*) AS c FROM team_members").fetchone()["c"]
+    if count == 0:
+        for name, photo in DEFAULT_TEAM_MEMBERS:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO team_members (name, photo)
+                VALUES (?, ?)
+                """,
+                (name, photo),
+            )
+    ensure_team_member_modified_at_column(conn)
+    ensure_team_member_job_title_column(conn)
+
+
+def ensure_team_member_modified_at_column(conn):
+    if DB_BACKEND == "postgres":
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = 'team_members'
+                """
+            )
+            cols = {row[0] for row in cur.fetchall()}
+            if "modified_at" not in cols:
+                cur.execute(
+                    "ALTER TABLE team_members ADD COLUMN modified_at TIMESTAMPTZ"
+                )
+        return
+
+    cols = sqlite_columns(conn, "team_members")
+    if "modified_at" not in cols:
+        conn.execute("ALTER TABLE team_members ADD COLUMN modified_at TEXT")
+
+
+def ensure_team_member_job_title_column(conn):
+    if DB_BACKEND == "postgres":
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = 'team_members'
+                """
+            )
+            cols = {row[0] for row in cur.fetchall()}
+            if "job_title" not in cols:
+                cur.execute(
+                    f"""
+                    ALTER TABLE team_members
+                    ADD COLUMN job_title TEXT NOT NULL DEFAULT '{DEFAULT_TEAM_JOB_TITLE}'
+                    """
+                )
+        return
+
+    cols = sqlite_columns(conn, "team_members")
+    if "job_title" not in cols:
+        conn.execute(
+            f"""
+            ALTER TABLE team_members
+            ADD COLUMN job_title TEXT NOT NULL DEFAULT '{DEFAULT_TEAM_JOB_TITLE}'
+            """
+        )
 
 
 def parse_operational_start(value):
@@ -887,6 +1019,315 @@ def fetch_device_by_token(device_token):
             ).fetchone()
             row = dict(row) if row else None
     return dict(row) if row else None
+
+
+def team_member_row_to_dict(row):
+    data = dict(row) if row else None
+    if not data:
+        return None
+    return {
+        "member_id": data["member_id"],
+        "name": data["name"],
+        "photo": data.get("photo") or "",
+        "created_at": data.get("created_at"),
+        "modified_at": data.get("modified_at"),
+        "job_title": data.get("job_title") or DEFAULT_TEAM_JOB_TITLE,
+    }
+
+
+def list_team_members():
+    with get_db() as conn:
+        if DB_BACKEND == "postgres":
+            import psycopg2.extras
+
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT member_id, name, photo, job_title, created_at, modified_at
+                    FROM team_members
+                    ORDER BY name COLLATE "C"
+                    """
+                )
+                rows = cur.fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT member_id, name, photo, job_title, created_at, modified_at
+                FROM team_members
+                ORDER BY name COLLATE NOCASE
+                """
+            ).fetchall()
+    return [team_member_row_to_dict(row) for row in rows]
+
+
+def fetch_team_member_by_name(name):
+    name = (name or "").strip()
+    if not name:
+        return None
+    with get_db() as conn:
+        if DB_BACKEND == "postgres":
+            import psycopg2.extras
+
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT member_id, name, photo, job_title, created_at, modified_at
+                    FROM team_members
+                    WHERE lower(name) = lower(%s)
+                    """,
+                    (name,),
+                )
+                row = cur.fetchone()
+        else:
+            row = conn.execute(
+                """
+                SELECT member_id, name, photo, job_title, created_at, modified_at
+                FROM team_members
+                WHERE name = ? COLLATE NOCASE
+                """,
+                (name,),
+            ).fetchone()
+    return team_member_row_to_dict(row)
+
+
+def create_team_member(name, photo=None, job_title=None):
+    name = (name or "").strip()
+    if not name:
+        return None, "Operator name is required."
+    photo = (photo or "").strip()
+    job_title = (job_title or DEFAULT_TEAM_JOB_TITLE).strip() or DEFAULT_TEAM_JOB_TITLE
+
+    with get_db() as conn:
+        if DB_BACKEND == "postgres":
+            with conn.cursor() as cur:
+                try:
+                    cur.execute(
+                        """
+                        INSERT INTO team_members (name, photo, job_title)
+                        VALUES (%s, %s, %s)
+                        RETURNING member_id
+                        """,
+                        (name, photo, job_title),
+                    )
+                    member_id = cur.fetchone()[0]
+                except Exception as exc:
+                    if exc.__class__.__name__ == "IntegrityError":
+                        return None, "That operator is already on the team."
+                    raise
+        else:
+            try:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO team_members (name, photo, job_title)
+                    VALUES (?, ?, ?)
+                    """,
+                    (name, photo, job_title),
+                )
+                member_id = cursor.lastrowid
+            except sqlite3.IntegrityError:
+                return None, "That operator is already on the team."
+
+    return fetch_team_member_by_id(member_id), None
+
+
+def fetch_team_member_by_id(member_id):
+    with get_db() as conn:
+        if DB_BACKEND == "postgres":
+            import psycopg2.extras
+
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT member_id, name, photo, job_title, created_at, modified_at
+                    FROM team_members
+                    WHERE member_id = %s
+                    """,
+                    (member_id,),
+                )
+                row = cur.fetchone()
+        else:
+            row = conn.execute(
+                """
+                SELECT member_id, name, photo, job_title, created_at, modified_at
+                FROM team_members
+                WHERE member_id = ?
+                """,
+                (member_id,),
+            ).fetchone()
+    return team_member_row_to_dict(row)
+
+
+def sync_jobs_assignee(old_name, new_name, photo=None):
+    if not old_name or not new_name:
+        return
+    with get_db() as conn:
+        if photo is not None:
+            if DB_BACKEND == "postgres":
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        UPDATE jobs
+                        SET assignee_name = %s, assignee_photo = %s
+                        WHERE assignee_name = %s
+                        """,
+                        (new_name, photo, old_name),
+                    )
+            else:
+                conn.execute(
+                    """
+                    UPDATE jobs
+                    SET assignee_name = ?, assignee_photo = ?
+                    WHERE assignee_name = ?
+                    """,
+                    (new_name, photo, old_name),
+                )
+        elif old_name != new_name:
+            if DB_BACKEND == "postgres":
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE jobs SET assignee_name = %s WHERE assignee_name = %s",
+                        (new_name, old_name),
+                    )
+            else:
+                conn.execute(
+                    "UPDATE jobs SET assignee_name = ? WHERE assignee_name = ?",
+                    (new_name, old_name),
+                )
+
+
+def update_team_member(member_id, name=None, photo=None, job_title=None):
+    existing = fetch_team_member_by_id(member_id)
+    if not existing:
+        return None, "Team member not found."
+
+    new_name = existing["name"]
+    new_photo = existing.get("photo") or ""
+    new_job_title = existing.get("job_title") or DEFAULT_TEAM_JOB_TITLE
+
+    if name is not None:
+        name = name.strip()
+        if not name:
+            return None, "Operator name is required."
+        new_name = name
+
+    if photo is not None:
+        new_photo = photo.strip()
+
+    if job_title is not None:
+        new_job_title = job_title.strip() or DEFAULT_TEAM_JOB_TITLE
+
+    if (
+        new_name == existing["name"]
+        and new_photo == (existing.get("photo") or "")
+        and new_job_title == (existing.get("job_title") or DEFAULT_TEAM_JOB_TITLE)
+    ):
+        return existing, None
+
+    modified_at = datetime.now(timezone.utc)
+    with get_db() as conn:
+        if DB_BACKEND == "postgres":
+            with conn.cursor() as cur:
+                try:
+                    cur.execute(
+                        """
+                        UPDATE team_members
+                        SET name = %s, photo = %s, job_title = %s, modified_at = %s
+                        WHERE member_id = %s
+                        """,
+                        (
+                            new_name,
+                            new_photo,
+                            new_job_title,
+                            modified_at,
+                            member_id,
+                        ),
+                    )
+                except Exception as exc:
+                    if exc.__class__.__name__ == "IntegrityError":
+                        return None, "That operator name is already in use."
+                    raise
+        else:
+            try:
+                conn.execute(
+                    """
+                    UPDATE team_members
+                    SET name = ?, photo = ?, job_title = ?, modified_at = ?
+                    WHERE member_id = ?
+                    """,
+                    (
+                        new_name,
+                        new_photo,
+                        new_job_title,
+                        modified_at.isoformat(),
+                        member_id,
+                    ),
+                )
+            except sqlite3.IntegrityError:
+                return None, "That operator name is already in use."
+
+    sync_jobs_assignee(existing["name"], new_name, new_photo)
+    return fetch_team_member_by_id(member_id), None
+
+
+def save_team_member_photo_file(member_id, file_storage):
+    existing = fetch_team_member_by_id(member_id)
+    if not existing:
+        return None, "Team member not found."
+    if not file_storage or not file_storage.filename:
+        return None, "Photo file is required."
+
+    content_type = (file_storage.mimetype or "").split(";")[0].strip().lower()
+    extension = ALLOWED_TEAM_PHOTO_TYPES.get(content_type)
+    if not extension:
+        return None, "Photo must be JPEG, PNG, or WebP."
+
+    data = file_storage.read()
+    if not data:
+        return None, "Photo file is empty."
+    if len(data) > MAX_TEAM_PHOTO_BYTES:
+        return None, "Photo must be 5 MB or smaller."
+
+    TEAM_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    filename = f"{member_id}_{secrets.token_hex(8)}{extension}"
+    target = TEAM_UPLOADS_DIR / filename
+    target.write_bytes(data)
+    photo_url = f"/uploads/team/{filename}"
+    return update_team_member(member_id, photo=photo_url)
+
+
+def delete_team_member(member_id):
+    with get_db() as conn:
+        if DB_BACKEND == "postgres":
+            with conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM team_members WHERE member_id = %s RETURNING member_id",
+                    (member_id,),
+                )
+                deleted = cur.fetchone()
+        else:
+            cursor = conn.execute(
+                "DELETE FROM team_members WHERE member_id = ?",
+                (member_id,),
+            )
+            deleted = cursor.rowcount > 0
+    return bool(deleted)
+
+
+def resolve_assignee(assignee_name=None, assignee_photo=None):
+    if assignee_name:
+        member = fetch_team_member_by_name(assignee_name)
+        if member:
+            return member["name"], member.get("photo") or DEFAULT_ASSIGNEE_PHOTO
+        return (
+            assignee_name.strip(),
+            (assignee_photo or "").strip() or DEFAULT_ASSIGNEE_PHOTO,
+        )
+
+    members = list_team_members()
+    if members:
+        first = members[0]
+        return first["name"], first.get("photo") or DEFAULT_ASSIGNEE_PHOTO
+    return DEFAULT_ASSIGNEE_NAME, DEFAULT_ASSIGNEE_PHOTO
 
 
 def require_device():
@@ -1013,8 +1454,7 @@ def create_job(
     tracking_mode="unit",
 ):
     author = author or DEFAULT_AUTHOR_NAME
-    assignee_name = assignee_name or DEFAULT_ASSIGNEE_NAME
-    assignee_photo = assignee_photo or DEFAULT_ASSIGNEE_PHOTO
+    assignee_name, assignee_photo = resolve_assignee(assignee_name, assignee_photo)
     tracking_mode = tracking_mode if tracking_mode in TRACKING_MODES else "unit"
     total_requested_quantity = max(1, int(total_requested_quantity or 1))
 
@@ -1133,10 +1573,17 @@ def update_job(
         assignee_name = assignee_name.strip()
         if not assignee_name:
             return None, "Assignee name cannot be empty."
+        resolved_name, resolved_photo = resolve_assignee(
+            assignee_name,
+            assignee_photo if assignee_photo is not None else None,
+        )
         fields.append("assignee_name")
-        values.append(assignee_name)
-
-    if assignee_photo is not None:
+        values.append(resolved_name)
+        fields.append("assignee_photo")
+        values.append(
+            assignee_photo.strip() if assignee_photo is not None else resolved_photo
+        )
+    elif assignee_photo is not None:
         fields.append("assignee_photo")
         values.append(assignee_photo.strip())
 
@@ -1577,6 +2024,61 @@ def api_list_devices():
     return jsonify(list_devices())
 
 
+@app.route("/api/team-members", methods=["GET", "POST"])
+def api_team_members():
+    if request.method == "GET":
+        return jsonify(list_team_members())
+
+    payload = request.get_json(silent=True) or {}
+    name = (payload.get("name") or "").strip()
+    photo = (payload.get("photo") or "").strip() or None
+    member, error = create_team_member(name, photo=photo)
+    if error:
+        return jsonify({"error": error}), 400
+    return jsonify(member), 201
+
+
+@app.route("/api/team-members/<int:member_id>", methods=["PATCH", "DELETE"])
+def api_team_member_detail(member_id):
+    if request.method == "DELETE":
+        if not delete_team_member(member_id):
+            return jsonify({"error": "Team member not found."}), 404
+        return jsonify({"ok": True})
+
+    payload = request.get_json(silent=True) or {}
+    name = payload.get("name")
+    if name is not None:
+        name = str(name).strip()
+    member, error = update_team_member(
+        member_id,
+        name=name if "name" in payload else None,
+        photo=(payload.get("photo") or "").strip() if "photo" in payload else None,
+        job_title=(
+            str(payload.get("job_title")).strip()
+            if "job_title" in payload
+            else None
+        ),
+    )
+    if error:
+        status = 404 if error == "Team member not found." else 400
+        return jsonify({"error": error}), status
+    return jsonify(member)
+
+
+@app.route("/api/team-members/<int:member_id>/photo", methods=["POST"])
+def api_upload_team_member_photo(member_id):
+    member, error = save_team_member_photo_file(member_id, request.files.get("photo"))
+    if error:
+        status = 404 if error == "Team member not found." else 400
+        return jsonify({"error": error}), status
+    return jsonify(member)
+
+
+@app.route("/uploads/team/<path:filename>")
+def team_member_upload(filename):
+    return send_from_directory(TEAM_UPLOADS_DIR, filename)
+
+
 @app.route("/api/devices/me", methods=["GET"])
 def api_device_me():
     token = extract_device_token(request.headers, {}, request.cookies)
@@ -1683,6 +2185,11 @@ def floor_scan_move():
 @app.route("/assets/<path:filename>")
 def react_assets(filename):
     return send_from_directory(REACT_DIST / "assets", filename)
+
+
+@app.route("/werqr-logo.png")
+def werqr_logo():
+    return send_from_directory(REACT_DIST, "werqr-logo.png")
 
 
 @app.route("/jobs", methods=["POST"])

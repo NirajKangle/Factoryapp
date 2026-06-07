@@ -1,20 +1,24 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { LayoutGrid, Table2 } from "lucide-react";
+
+import type { AppMenuAction } from "@/components/ui/app-menu";
 import KanbanBoard from "@/components/ui/kanban-board";
 import JobsTable from "@/components/ui/jobs-table";
 import TaskSidebar, { type TaskFormData } from "@/components/ui/task-sidebar";
-import { ThemeToggle } from "@/components/ui/theme-toggle";
-import { Factory } from "lucide-react";
-import { Status, StatusIndicator, StatusLabel } from "@/components/ui/status";
+import { TeamMembersPanel } from "@/components/ui/team-members-panel";
+import { WerqrHeader } from "@/components/ui/werqr-header";
 import {
-  DEFAULT_ASSIGNEE,
   findTeamMember,
   PIPELINE,
   TEAM_MEMBERS,
   type Job,
   type JobStatus,
 } from "@/lib/job-status";
-import { DeviceMenu } from "@/components/ui/device-menu";
 import { StationSetup } from "@/components/ui/station-setup";
+import {
+  fetchTeamMembers,
+  type TeamMemberRecord,
+} from "@/lib/team-members";
 import {
   getDeviceToken,
   getWorkstationId,
@@ -44,7 +48,9 @@ function App() {
   const [view, setView] = useState<ViewMode>("kanban");
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [deletingTask, setDeletingTask] = useState(false);
-  const [newAssignee, setNewAssignee] = useState(DEFAULT_ASSIGNEE.name);
+  const [teamMembers, setTeamMembers] = useState<TeamMemberRecord[]>([]);
+  const [teamPanelOpen, setTeamPanelOpen] = useState(false);
+  const [newAssignee, setNewAssignee] = useState("");
   const [jobId, setJobId] = useState("");
   const [clientPhone, setClientPhone] = useState("");
   const [description, setDescription] = useState("");
@@ -53,10 +59,24 @@ function App() {
     getWorkstationId()
   );
 
+  const assigneeOptions = teamMembers.length > 0 ? teamMembers : TEAM_MEMBERS;
+
   const selectedJob = useMemo(
     () => jobs.find((job) => job.task_id === selectedTaskId) ?? null,
     [jobs, selectedTaskId]
   );
+
+  const loadTeamMembers = useCallback(async () => {
+    try {
+      const members = await fetchTeamMembers();
+      setTeamMembers(members);
+      setNewAssignee((current) =>
+        current && members.some((member) => member.name === current) ? current : ""
+      );
+    } catch {
+      setTeamMembers([]);
+    }
+  }, []);
 
   const loadJobs = useCallback(async () => {
     setError(null);
@@ -75,7 +95,8 @@ function App() {
 
   useEffect(() => {
     void loadJobs();
-  }, [loadJobs]);
+    void loadTeamMembers();
+  }, [loadJobs, loadTeamMembers]);
 
   async function handleAddJob(event: React.FormEvent) {
     event.preventDefault();
@@ -86,14 +107,19 @@ function App() {
     body.append("job_id", jobId.trim());
     body.append("client_phone", clientPhone.trim());
     body.append("description", description.trim());
-    const member = findTeamMember(newAssignee) ?? DEFAULT_ASSIGNEE;
-    body.append("assignee_name", member.name);
-    body.append("assignee_photo", member.photo);
+    const member = newAssignee
+      ? findTeamMember(assigneeOptions, newAssignee)
+      : undefined;
+    if (member) {
+      body.append("assignee_name", member.name);
+      body.append("assignee_photo", member.photo);
+    }
 
     await fetch("/jobs", { method: "POST", body });
     setJobId("");
     setClientPhone("");
     setDescription("");
+    setNewAssignee("");
     setSubmitting(false);
     await loadJobs();
   }
@@ -209,37 +235,20 @@ function App() {
     setSelectedTaskId(job.task_id);
   }
 
+  function handleMenuAction(action: AppMenuAction) {
+    if (action === "team-members") {
+      setTeamPanelOpen(true);
+      return;
+    }
+  }
+
   return (
     <div className="min-h-screen bg-background">
-      <header className="border-b border-border bg-card">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 py-4">
-          <div className="flex items-center gap-3">
-            <div
-              className="flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-primary/10 text-primary"
-              aria-hidden="true"
-            >
-              <Factory className="h-6 w-6" strokeWidth={1.75} />
-            </div>
-            <div>
-              <h1 className="text-xl font-semibold tracking-tight text-foreground">
-                Werqr
-              </h1>
-              <p className="text-sm text-muted-foreground">Shop floor job tracker</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-4">
-            <Status status="online">
-              <StatusIndicator />
-              <StatusLabel>Live</StatusLabel>
-            </Status>
-            <span className="hidden text-sm text-muted-foreground sm:inline">
-              {jobs.length} job{jobs.length === 1 ? "" : "s"}
-            </span>
-            {workstationId && <DeviceMenu currentDeviceId={workstationId} />}
-            <ThemeToggle />
-          </div>
-        </div>
-      </header>
+      <WerqrHeader
+        jobCount={jobs.length}
+        workstationId={workstationId}
+        onMenuAction={handleMenuAction}
+      />
 
       <main className="mx-auto max-w-6xl space-y-5 p-6">
         {error && (
@@ -252,59 +261,60 @@ function App() {
           <StationSetup onReady={(id) => setWorkstationId(id)} />
         )}
 
-        <section className="rounded-xl border border-border bg-section-new-job p-5 shadow-sm">
-          <h2 className="mb-4 text-sm font-semibold text-foreground">Add a new Job</h2>
-          <form onSubmit={handleAddJob} className="flex flex-wrap items-end gap-3">
-            <label className="flex min-w-[160px] flex-1 flex-col gap-1.5">
-              <span className="text-xs font-medium text-muted-foreground">Job Name</span>
+        <section className="rounded-xl border border-border bg-section-new-job px-4 py-3 shadow-sm">
+          <h2 className="mb-3 pl-3 text-lg font-semibold text-foreground">Add a new Job</h2>
+          <form onSubmit={handleAddJob} className="flex flex-wrap items-end gap-2">
+            <label className="flex min-w-[140px] flex-1 flex-col gap-1">
+              <span className="pl-3 text-xs font-medium text-muted-foreground">Job Name</span>
               <input
                 type="text"
                 value={jobId}
                 onChange={(e) => setJobId(e.target.value)}
                 placeholder="Add job name"
                 required
-                className="rounded-lg border border-input bg-background px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/45"
+                className="h-10 rounded-lg border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground/45"
               />
             </label>
-            <label className="flex min-w-[160px] flex-1 flex-col gap-1.5">
-              <span className="text-xs font-medium text-muted-foreground">Customer Phone</span>
+            <label className="flex min-w-[140px] flex-1 flex-col gap-1">
+              <span className="pl-3 text-xs font-medium text-muted-foreground">Customer Phone</span>
               <input
                 type="text"
                 value={clientPhone}
                 onChange={(e) => setClientPhone(e.target.value)}
                 placeholder="Add customer phone"
                 required
-                className="rounded-lg border border-input bg-background px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/45"
+                className="h-10 rounded-lg border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground/45"
               />
             </label>
-            <label className="flex min-w-[140px] flex-1 flex-col gap-1.5">
-              <span className="text-xs font-medium text-muted-foreground">Assignee</span>
+            <label className="flex min-w-[120px] flex-1 flex-col gap-1">
+              <span className="pl-3 text-xs font-medium text-muted-foreground">Assignee</span>
               <select
                 value={newAssignee}
                 onChange={(e) => setNewAssignee(e.target.value)}
-                className="rounded-lg border border-input bg-background px-3 py-2.5 text-sm text-foreground"
+                className="h-10 rounded-lg border border-input bg-background pl-3 pr-10 text-sm text-foreground"
               >
-                {TEAM_MEMBERS.map((member) => (
+                <option value="">Select assignee</option>
+                {assigneeOptions.map((member) => (
                   <option key={member.name} value={member.name}>
                     {member.name}
                   </option>
                 ))}
               </select>
             </label>
-            <label className="flex min-w-[200px] flex-[2] flex-col gap-1.5">
-              <span className="text-xs font-medium text-muted-foreground">Description</span>
+            <label className="flex min-w-[180px] flex-[2] flex-col gap-1">
+              <span className="pl-3 text-xs font-medium text-muted-foreground">Description</span>
               <input
                 type="text"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder="Add notes or job details"
-                className="rounded-lg border border-input bg-background px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/45"
+                className="h-10 rounded-lg border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground/45"
               />
             </label>
             <button
               type="submit"
               disabled={submitting}
-              className="rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+              className="h-10 shrink-0 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
             >
               Add Job
             </button>
@@ -316,25 +326,27 @@ function App() {
             type="button"
             onClick={() => setView("kanban")}
             className={cn(
-              "rounded-full px-4 py-1.5 text-sm font-medium transition-colors",
+              "inline-flex items-center gap-1.5 rounded-full px-4 py-1.5 text-sm font-medium transition-colors",
               view === "kanban"
                 ? "bg-primary text-primary-foreground shadow-sm"
                 : "border border-border bg-card text-muted-foreground hover:text-foreground"
             )}
           >
+            <LayoutGrid className="h-4 w-4" />
             Kanban
           </button>
           <button
             type="button"
             onClick={() => setView("table")}
             className={cn(
-              "rounded-full px-4 py-1.5 text-sm font-medium transition-colors",
+              "inline-flex items-center gap-1.5 rounded-full px-4 py-1.5 text-sm font-medium transition-colors",
               view === "table"
                 ? "bg-primary text-primary-foreground shadow-sm"
                 : "border border-border bg-card text-muted-foreground hover:text-foreground"
             )}
           >
-            Table view
+            <Table2 className="h-4 w-4" />
+            Table
           </button>
         </div>
 
@@ -359,10 +371,19 @@ function App() {
       <TaskSidebar
         job={selectedJob}
         open={selectedJob !== null}
+        teamMembers={assigneeOptions}
         onClose={() => setSelectedTaskId(null)}
         onSave={saveTask}
         onDelete={deleteTask}
         deleting={deletingTask}
+      />
+
+      <TeamMembersPanel
+        open={teamPanelOpen}
+        members={teamMembers}
+        onClose={() => setTeamPanelOpen(false)}
+        onChange={setTeamMembers}
+        onRefresh={() => void loadJobs()}
       />
     </div>
   );

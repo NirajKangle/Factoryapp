@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <title>Werqr — Floor Scan</title>
+  <link rel="icon" type="image/png" href="/werqr-logo.png" />
   <style>
     :root {
       --bg: #09090b;
@@ -29,41 +30,78 @@
     .page { flex: 1; display: flex; flex-direction: column; }
     .page[hidden] { display: none !important; }
     header {
-      padding: 1rem 1.25rem 0.75rem;
       border-bottom: 1px solid var(--border);
       background: var(--card);
     }
-    header.compact { padding-bottom: 1rem; }
-    .top-brand {
-      display: grid;
-      grid-template-columns: 2.5rem 1fr 2.5rem;
-      align-items: start;
+    .header-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      padding: 0.875rem 1rem 0.625rem;
+    }
+    .brand-cluster {
+      display: flex;
+      align-items: center;
+      gap: 0.625rem;
+      min-width: 0;
     }
     .logo-wrap {
-      width: 2.5rem;
-      height: 2.5rem;
+      position: relative;
+      width: 2.25rem;
+      height: 2.25rem;
+      flex-shrink: 0;
       color: var(--accent);
     }
-    .logo-wrap svg { width: 100%; height: 100%; }
+    .logo-wrap::before {
+      content: "";
+      position: absolute;
+      inset: 0.2rem;
+      border-radius: 0.5rem;
+      border: 1px solid var(--border);
+      background: rgba(59, 130, 246, 0.12);
+    }
+    .logo-wrap img {
+      position: relative;
+      z-index: 1;
+      width: 1.85rem;
+      height: 1.85rem;
+      margin: 0.1rem auto 0;
+      display: block;
+      object-fit: contain;
+    }
     .title-block {
-      text-align: center;
-      grid-column: 2;
+      min-width: 0;
     }
     .title-block h1 {
-      font-size: 1.25rem;
+      font-size: 1.5rem;
       font-weight: 700;
       letter-spacing: -0.02em;
+      line-height: 1.1;
     }
-    .title-block .subtitle {
+    .header-device {
+      flex-shrink: 0;
+      max-width: 9rem;
+    }
+    .device-name { display: flex; justify-content: flex-end; }
+    .sub-bar {
+      display: flex;
+      align-items: center;
+      padding: 0.5rem 1rem 0.625rem;
+      border-top: 1px solid rgba(63, 63, 70, 0.45);
+    }
+    .back-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
       font-size: 0.875rem;
+      font-weight: 600;
       color: var(--muted);
-      margin-top: 0.125rem;
     }
+    .back-link:hover { color: var(--text); }
     .device-section {
-      margin-top: 0.75rem;
-      text-align: center;
+      padding: 0 1rem 0.875rem;
     }
-    .device-name { display: flex; justify-content: center; }
     .device-pill {
       display: inline-flex;
       align-items: center;
@@ -77,6 +115,12 @@
       color: var(--text);
     }
     .device-emoji { font-size: 1.05rem; line-height: 1; }
+    .device-pill span:last-child {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 6.5rem;
+    }
     .station-pill-wrap {
       display: flex;
       justify-content: center;
@@ -282,12 +326,6 @@
       background: var(--accent);
       color: #fff;
     }
-    footer {
-      padding: 0.75rem 1rem 1.25rem;
-      text-align: center;
-      font-size: 0.75rem;
-      color: var(--muted);
-    }
     a { color: var(--accent); text-decoration: none; }
     a:hover { text-decoration: underline; }
   </style>
@@ -296,21 +334,26 @@
   <!-- Step 1: register device + pick station -->
   <div class="page" id="home-page">
     <header>
-      <div class="top-brand">
-        <div class="logo-wrap" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M2 20h20"/>
-            <path d="M5 20V10l5-4v14"/>
-            <path d="M12 20V6l5 3.5V20"/>
-            <path d="M19 20V9l3-2v13"/>
-            <path d="M9 13h1"/>
-            <path d="M16 13h1"/>
-          </svg>
+      <div class="header-top">
+        <div class="brand-cluster">
+          <div class="logo-wrap" aria-hidden="true">
+            <img src="/werqr-logo.png" alt="" width="30" height="30" />
+          </div>
+          <div class="title-block">
+            <h1>Werqr</h1>
+          </div>
         </div>
-        <div class="title-block">
-          <h1>Werqr</h1>
-          <p class="subtitle">Floor scan</p>
+        <div class="header-device">
+          <div class="device-name" id="device-name" hidden>
+            <span class="device-pill">
+              <span class="device-emoji" aria-hidden="true">📱</span>
+              <span id="device-name-text"></span>
+            </span>
+          </div>
         </div>
+      </div>
+      <div class="sub-bar">
+        <a href="/" class="back-link">← Back to board</a>
       </div>
       <div class="device-section">
         <div class="panel" id="setup-panel" hidden>
@@ -322,12 +365,6 @@
             <input id="ws-id" type="text" placeholder="Raj-Phone" />
           </div>
           <button type="button" class="primary" id="ws-register">Register this phone</button>
-        </div>
-        <div class="device-name" id="device-name" hidden>
-          <span class="device-pill">
-            <span class="device-emoji" aria-hidden="true">📱</span>
-            <span id="device-name-text"></span>
-          </span>
         </div>
       </div>
     </header>
@@ -341,28 +378,31 @@
       </div>
       <div id="home-error-toast" hidden role="alert"></div>
     </main>
-    <footer>
-      <a href="/">Back to board</a>
-    </footer>
   </div>
 
   <!-- Step 2: scan QR at chosen station -->
   <div class="page" id="scan-page" hidden>
-    <header class="compact">
-      <div class="top-brand">
-        <div class="logo-wrap" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M2 20h20"/>
-            <path d="M5 20V10l5-4v14"/>
-            <path d="M12 20V6l5 3.5V20"/>
-            <path d="M19 20V9l3-2v13"/>
-            <path d="M9 13h1"/>
-            <path d="M16 13h1"/>
-          </svg>
+    <header>
+      <div class="header-top">
+        <div class="brand-cluster">
+          <div class="logo-wrap" aria-hidden="true">
+            <img src="/werqr-logo.png" alt="" width="30" height="30" />
+          </div>
+          <div class="title-block">
+            <h1>Werqr</h1>
+          </div>
         </div>
-        <div class="title-block">
-          <h1>Werqr</h1>
+        <div class="header-device">
+          <div class="device-name" id="scan-device-name">
+            <span class="device-pill">
+              <span class="device-emoji" aria-hidden="true">📱</span>
+              <span id="scan-device-name-text"></span>
+            </span>
+          </div>
         </div>
+      </div>
+      <div class="sub-bar">
+        <a href="/scan" class="back-link">← Change station</a>
       </div>
       <div class="station-pill-wrap">
         <span class="station-pill" id="station-label">Machining</span>
@@ -397,9 +437,6 @@
       </div>
       <div id="scan-error-toast" hidden role="alert"></div>
     </main>
-    <footer>
-      <a href="/scan">Change station</a>
-    </footer>
   </div>
 
   <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
@@ -436,6 +473,8 @@
     const statusGrid = document.getElementById("status-grid");
     const deviceNameEl = document.getElementById("device-name");
     const deviceNameTextEl = document.getElementById("device-name-text");
+    const scanDeviceNameEl = document.getElementById("scan-device-name");
+    const scanDeviceNameTextEl = document.getElementById("scan-device-name-text");
     const wsIdInput = document.getElementById("ws-id");
     const readerEl = document.getElementById("reader");
     const successOverlay = document.getElementById("success-overlay");
@@ -481,18 +520,33 @@
       localStorage.removeItem(TOKEN_KEY);
     }
 
+    function updateDeviceHeader() {
+      const label = workstationId || "";
+      if (deviceNameEl && deviceNameTextEl) {
+        deviceNameEl.hidden = !deviceToken || !label;
+        if (!deviceNameEl.hidden) {
+          deviceNameTextEl.textContent = label;
+        }
+      }
+      if (scanDeviceNameEl && scanDeviceNameTextEl) {
+        scanDeviceNameEl.hidden = !deviceToken || !label;
+        if (!scanDeviceNameEl.hidden) {
+          scanDeviceNameTextEl.textContent = label;
+        }
+      }
+    }
+
     function updateHomeDeviceSection() {
       if (!deviceToken) {
         setupPanel.hidden = false;
-        deviceNameEl.hidden = true;
         statusGrid.hidden = true;
         if (workstationId) wsIdInput.value = workstationId;
+        updateDeviceHeader();
         return;
       }
       setupPanel.hidden = true;
-      deviceNameEl.hidden = false;
-      deviceNameTextEl.textContent = workstationId || "Registered phone";
       statusGrid.hidden = false;
+      updateDeviceHeader();
     }
 
     function applyStationButtonColors() {
@@ -774,6 +828,7 @@
           window.location.replace("/scan");
           return;
         }
+        updateDeviceHeader();
         startScanner().catch((err) => {
           showError(
             "Camera blocked. Use HTTPS and allow camera access. " + (err.message || "")

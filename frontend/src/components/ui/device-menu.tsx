@@ -6,9 +6,10 @@ import { cn } from "@/lib/utils";
 
 export interface DeviceMenuProps {
   currentDeviceId: string;
+  mobile?: boolean;
 }
 
-export function DeviceMenu({ currentDeviceId }: DeviceMenuProps) {
+export function DeviceMenu({ currentDeviceId, mobile = false }: DeviceMenuProps) {
   const [open, setOpen] = useState(false);
   const [devices, setDevices] = useState<DeviceSummary[]>([]);
   const [loading, setLoading] = useState(false);
@@ -46,12 +47,15 @@ export function DeviceMenu({ currentDeviceId }: DeviceMenuProps) {
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}
-        className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/40 px-3 py-1 text-sm font-semibold text-foreground transition-colors hover:bg-muted/60"
+        className={cn(
+          "inline-flex max-w-[9rem] items-center gap-1.5 rounded-full border border-border bg-muted/40 font-semibold text-foreground transition-colors hover:bg-muted/60 sm:max-w-none",
+          mobile ? "px-2 py-1 text-xs" : "px-3 py-1 text-sm"
+        )}
         aria-expanded={open}
         aria-haspopup="listbox"
       >
-        <span aria-hidden="true">💻</span>
-        {currentDeviceId}
+        <span aria-hidden="true">{mobile ? "📱" : "💻"}</span>
+        <span className="truncate">{currentDeviceId}</span>
         <ChevronDown
           className={cn(
             "h-3.5 w-3.5 text-muted-foreground transition-transform",
@@ -93,7 +97,7 @@ export function DeviceMenu({ currentDeviceId }: DeviceMenuProps) {
                   <span className="min-w-0 flex-1 truncate font-medium">{device.device_id}</span>
                   {isCurrent ? (
                     <span className="text-[10px] font-medium uppercase tracking-wide text-primary">
-                      This PC
+                      {mobile ? "This phone" : "This PC"}
                     </span>
                   ) : null}
                 </div>

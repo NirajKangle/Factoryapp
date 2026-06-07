@@ -82,8 +82,11 @@ export function initialsForName(name: string): string {
   return name.slice(0, 2).toUpperCase();
 }
 
-export function findTeamMember(name: string): TeamMember | undefined {
-  return TEAM_MEMBERS.find(
+export function findTeamMember(
+  members: TeamMember[],
+  name: string
+): TeamMember | undefined {
+  return members.find(
     (member) => member.name.toLowerCase() === name.toLowerCase()
   );
 }

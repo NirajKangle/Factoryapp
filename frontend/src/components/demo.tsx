@@ -1,27 +1,29 @@
-import { Status, StatusIndicator, StatusLabel } from "@/components/ui/status";
+import { Header } from "@/components/ui/header-3";
 
-const Example = () => (
-  <div className="flex flex-wrap gap-2">
-    <Status status="online">
-      <StatusIndicator />
-      <StatusLabel />
-    </Status>
+export default function Demo() {
+  return (
+    <div className="w-full">
+      <Header />
 
-    <Status status="offline">
-      <StatusIndicator />
-      <StatusLabel />
-    </Status>
+      <main className="mx-auto min-h-screen w-full max-w-3xl px-4 py-12">
+        <div className="mb-4 space-y-2">
+          <div className="h-6 w-4/6 rounded-md border bg-accent" />
+          <div className="h-6 w-1/2 rounded-md border bg-accent" />
+        </div>
+        <div className="mb-8 flex gap-2">
+          <div className="h-3 w-14 rounded-md border bg-accent" />
+          <div className="h-3 w-12 rounded-md border bg-accent" />
+        </div>
 
-    <Status status="maintenance">
-      <StatusIndicator />
-      <StatusLabel />
-    </Status>
-
-    <Status status="degraded">
-      <StatusIndicator />
-      <StatusLabel />
-    </Status>
-  </div>
-);
-
-export default Example;
+        {Array.from({ length: 7 }).map((_, i) => (
+          <div key={i} className="mb-8 space-y-2">
+            <div className="h-4 w-full rounded-md border bg-accent" />
+            <div className="h-4 w-full rounded-md border bg-accent" />
+            <div className="h-4 w-full rounded-md border bg-accent" />
+            <div className="h-4 w-1/2 rounded-md border bg-accent" />
+          </div>
+        ))}
+      </main>
+    </div>
+  );
+}

@@ -45,39 +45,45 @@ function JobCardContent({ job }: { job: Job }) {
   const description = (job.description ?? "").trim();
 
   return (
-    <CardContent className="p-4">
-      <div className="space-y-3">
-        <div className="flex items-start justify-between gap-2">
-          <h4 className="line-clamp-2 flex-1 text-base font-semibold leading-snug text-foreground">
+    <CardContent className="p-2.5">
+      <div className="flex items-stretch gap-2.5">
+        <div className="min-w-0 flex-1 space-y-1.5">
+          <h4 className="line-clamp-2 text-sm font-semibold leading-tight text-foreground">
             {job.job_id}
           </h4>
-          <TaskQrCode taskId={job.task_id} jobId={job.job_id} size={52} />
-        </div>
-
-        <AssigneeDisplay
-          name={job.assignee_name}
-          photo={job.assignee_photo}
-          compact
-        />
-
-        <div>
-          <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-            Customer Phone
-          </p>
-          <p className="text-sm text-foreground">{job.client_phone}</p>
-        </div>
-
-        {description ? (
-          <p className="line-clamp-2 text-sm text-muted-foreground/90">{description}</p>
-        ) : null}
-
-        <div className="flex flex-wrap items-center gap-2">
-          <StatusBadge status={job.status} label={job.status_label} />
-          {job.status === "dispatch" && (
-            <Badge variant="secondary" className="text-xs font-normal">
+          <StatusBadge
+            status={job.status}
+            label={job.status_label}
+            className="px-2 py-0 text-[10px]"
+          />
+          <AssigneeDisplay
+            name={job.assignee_name}
+            photo={job.assignee_photo}
+            dense
+          />
+          <p className="truncate text-xs text-muted-foreground">{job.client_phone}</p>
+          {description ? (
+            <p className="line-clamp-1 text-xs text-muted-foreground/90">{description}</p>
+          ) : null}
+          {job.status === "dispatch" ? (
+            <Badge variant="secondary" className="text-[10px] font-normal">
               Ready for pickup
             </Badge>
-          )}
+          ) : null}
+        </div>
+
+        <div
+          className="flex shrink-0 items-center"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <TaskQrCode
+            taskId={job.task_id}
+            jobId={job.job_id}
+            size={56}
+            isolatePointer
+            className="[&>div]:p-1"
+          />
         </div>
       </div>
     </CardContent>
@@ -175,7 +181,7 @@ function KanbanColumn({
         </button>
       </div>
 
-      <div ref={setNodeRef} className="min-h-[140px] space-y-3">
+      <div ref={setNodeRef} className="min-h-[120px] space-y-2">
         {loading ? (
           <p className="py-8 text-center text-sm text-muted-foreground">Loading…</p>
         ) : jobs.length === 0 ? (
