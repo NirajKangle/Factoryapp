@@ -248,7 +248,7 @@ export function TaskSidebar({
 
             <div className="space-y-1.5">
               <label htmlFor="task-job-id" className="text-sm font-medium text-foreground">
-                Job ID
+                Job Name
               </label>
               <input
                 id="task-job-id"
@@ -262,7 +262,7 @@ export function TaskSidebar({
 
             <div className="space-y-1.5">
               <label htmlFor="task-phone" className="text-sm font-medium text-foreground">
-                Client phone
+                Customer Phone
               </label>
               <input
                 id="task-phone"

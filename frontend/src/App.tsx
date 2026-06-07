@@ -13,6 +13,7 @@ import {
   type Job,
   type JobStatus,
 } from "@/lib/job-status";
+import { DeviceMenu } from "@/components/ui/device-menu";
 import { StationSetup } from "@/components/ui/station-setup";
 import {
   getDeviceToken,
@@ -235,10 +236,10 @@ function App() {
               {jobs.length} job{jobs.length === 1 ? "" : "s"}
             </span>
             {workstationId && (
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/40 px-3 py-1 text-sm font-semibold text-foreground">
-                <span aria-hidden="true">💻</span>
-                {workstationId}
-              </span>
+              <DeviceMenu
+                currentDeviceId={workstationId}
+                onSwitch={(id) => setWorkstationId(id)}
+              />
             )}
             <ThemeToggle />
           </div>
@@ -260,23 +261,23 @@ function App() {
           <h2 className="mb-4 text-sm font-semibold text-foreground">Add a new Job</h2>
           <form onSubmit={handleAddJob} className="flex flex-wrap items-end gap-3">
             <label className="flex min-w-[160px] flex-1 flex-col gap-1.5">
-              <span className="text-xs font-medium text-muted-foreground">Job ID</span>
+              <span className="text-xs font-medium text-muted-foreground">Job Name</span>
               <input
                 type="text"
                 value={jobId}
                 onChange={(e) => setJobId(e.target.value)}
-                placeholder="Add Job ID"
+                placeholder="Add job name"
                 required
                 className="rounded-lg border border-input bg-background px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/45"
               />
             </label>
             <label className="flex min-w-[160px] flex-1 flex-col gap-1.5">
-              <span className="text-xs font-medium text-muted-foreground">Client Phone</span>
+              <span className="text-xs font-medium text-muted-foreground">Customer Phone</span>
               <input
                 type="text"
                 value={clientPhone}
                 onChange={(e) => setClientPhone(e.target.value)}
-                placeholder="add phone number"
+                placeholder="Add customer phone"
                 required
                 className="rounded-lg border border-input bg-background px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/45"
               />

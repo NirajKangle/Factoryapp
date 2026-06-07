@@ -27,6 +27,21 @@ export function isMobileBrowser(): boolean {
   );
 }
 
+export interface DeviceSummary {
+  device_id: string;
+  created_at: string;
+}
+
+export async function fetchDevices(): Promise<DeviceSummary[]> {
+  const response = await fetch("/api/devices", {
+    headers: { Accept: "application/json" },
+  });
+  if (!response.ok) {
+    throw new Error("Could not load devices.");
+  }
+  return response.json();
+}
+
 export async function registerWorkstation(
   workstationId: string
 ): Promise<{ device_id: string; device_token: string }> {

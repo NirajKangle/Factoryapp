@@ -17,6 +17,18 @@ export interface JobsTableProps {
 type SortKey = "name" | "date";
 type SortDirection = "asc" | "desc";
 
+const QR_SIZE = 28;
+
+function formatCreatedAt(value: string): string {
+  const date = new Date(value);
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 export function JobsTable({
   jobs,
   loading,
@@ -69,7 +81,7 @@ export function JobsTable({
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs font-medium text-muted-foreground">Sort by</span>
         <SortButton
-          label="Name"
+          label="Job Name"
           active={sortKey === "name"}
           direction={sortKey === "name" ? sortDirection : undefined}
           onClick={() => toggleSort("name")}
@@ -83,16 +95,16 @@ export function JobsTable({
       </div>
 
       <div className="overflow-hidden rounded-xl border border-border bg-card">
-        <table className="w-full min-w-[760px] border-collapse text-sm">
+        <table className="w-full min-w-[720px] border-collapse text-xs">
           <thead>
             <tr className="border-b border-border bg-muted/30 text-left">
-            <th className="px-2 py-3 font-medium text-muted-foreground">QR</th>
-            <th className="px-4 py-3 font-medium text-muted-foreground">Job</th>
-              <th className="px-4 py-3 font-medium text-muted-foreground">Assignee</th>
-              <th className="px-4 py-3 font-medium text-muted-foreground">Phone</th>
-              <th className="px-4 py-3 font-medium text-muted-foreground">Description</th>
-              <th className="px-4 py-3 font-medium text-muted-foreground">Status</th>
-              <th className="px-4 py-3 font-medium text-muted-foreground">Created</th>
+              <th className="w-10 pl-2 pr-0 py-2 font-medium text-muted-foreground" aria-label="QR" />
+              <th className="px-2 py-2 font-medium text-muted-foreground">Job Name</th>
+              <th className="px-2 py-2 font-medium text-muted-foreground">Assignee</th>
+              <th className="px-2 py-2 font-medium text-muted-foreground">Customer Phone</th>
+              <th className="px-2 py-2 font-medium text-muted-foreground">Description</th>
+              <th className="px-2 py-2 font-medium text-muted-foreground">Status</th>
+              <th className="px-2 py-2 font-medium text-muted-foreground">Created</th>
             </tr>
           </thead>
           <tbody>
@@ -106,29 +118,42 @@ export function JobsTable({
                   selectedTaskId === job.task_id && "bg-primary/5"
                 )}
               >
-              <td
-                className="px-2 py-2"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <TaskQrCode taskId={job.task_id} jobId={job.job_id} size={44} />
-              </td>
-              <td className="px-4 py-3 font-medium text-foreground">{job.job_id}</td>
-                <td className="px-4 py-3">
+                <td
+                  className="w-10 pl-2 pr-0 py-1 align-middle"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <TaskQrCode
+                    taskId={job.task_id}
+                    jobId={job.job_id}
+                    size={QR_SIZE}
+                    className="[&>div]:p-0.5"
+                  />
+                </td>
+                <td className="px-2 py-1 align-middle font-medium text-foreground">
+                  {job.job_id}
+                </td>
+                <td className="px-2 py-1 align-middle">
                   <AssigneeDisplay
                     name={job.assignee_name}
                     photo={job.assignee_photo}
-                    compact
+                    dense
                   />
                 </td>
-                <td className="px-4 py-3 text-muted-foreground">{job.client_phone}</td>
-                <td className="max-w-xs truncate px-4 py-3 text-muted-foreground">
+                <td className="px-2 py-1 align-middle text-muted-foreground">
+                  {job.client_phone}
+                </td>
+                <td className="max-w-[180px] truncate px-2 py-1 align-middle text-muted-foreground">
                   {(job.description ?? "").trim() || "—"}
                 </td>
-                <td className="px-4 py-3">
-                  <StatusBadge status={job.status} label={job.status_label} />
+                <td className="px-2 py-1 align-middle">
+                  <StatusBadge
+                    status={job.status}
+                    label={job.status_label}
+                    className="px-2 py-0 text-[10px]"
+                  />
                 </td>
-                <td className="px-4 py-3 text-muted-foreground">
-                  {new Date(job.created_at).toLocaleString()}
+                <td className="whitespace-nowrap px-2 py-1 align-middle text-muted-foreground">
+                  {formatCreatedAt(job.created_at)}
                 </td>
               </tr>
             ))}

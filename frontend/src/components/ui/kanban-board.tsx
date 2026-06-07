@@ -60,7 +60,12 @@ function JobCardContent({ job }: { job: Job }) {
           compact
         />
 
-        <p className="text-sm text-muted-foreground">{job.client_phone}</p>
+        <div>
+          <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+            Customer Phone
+          </p>
+          <p className="text-sm text-foreground">{job.client_phone}</p>
+        </div>
 
         {description ? (
           <p className="line-clamp-2 text-sm text-muted-foreground/90">{description}</p>

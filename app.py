@@ -1538,6 +1538,45 @@ def api_register_device():
     return response
 
 
+def list_devices():
+    with get_db() as conn:
+        if DB_BACKEND == "postgres":
+            import psycopg2.extras
+
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT device_name, created_at
+                    FROM devices
+                    ORDER BY device_name
+                    """
+                )
+                rows = cur.fetchall()
+        else:
+            rows = [
+                dict(row)
+                for row in conn.execute(
+                    """
+                    SELECT device_name, created_at
+                    FROM devices
+                    ORDER BY device_name
+                    """
+                ).fetchall()
+            ]
+    return [
+        {
+            "device_id": row["device_name"],
+            "created_at": row["created_at"],
+        }
+        for row in rows
+    ]
+
+
+@app.route("/api/devices", methods=["GET"])
+def api_list_devices():
+    return jsonify(list_devices())
+
+
 @app.route("/api/devices/me", methods=["GET"])
 def api_device_me():
     token = extract_device_token(request.headers, {}, request.cookies)
