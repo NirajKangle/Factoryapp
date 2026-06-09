@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { LayoutGrid, Table2 } from "lucide-react";
+import { BarChart3, LayoutGrid, Table2 } from "lucide-react";
 
 import type { AppMenuAction } from "@/components/ui/app-menu";
+import DashboardPanel from "@/components/ui/dashboard-panel";
 import KanbanBoard from "@/components/ui/kanban-board";
 import JobsTable from "@/components/ui/jobs-table";
+import { ProcessSelector } from "@/components/ui/process-selector";
+import { ProcessesPanel } from "@/components/ui/processes-panel";
 import TaskSidebar, { type TaskFormData } from "@/components/ui/task-sidebar";
 import { TeamMembersPanel } from "@/components/ui/team-members-panel";
 import { WerqrHeader } from "@/components/ui/werqr-header";
@@ -13,7 +16,9 @@ import {
   TEAM_MEMBERS,
   type Job,
   type JobStatus,
+  type ProcessStage,
 } from "@/lib/job-status";
+import { fetchProcesses, type ProcessRecord } from "@/lib/processes";
 import { StationSetup } from "@/components/ui/station-setup";
 import {
   fetchTeamMembers,
@@ -25,20 +30,22 @@ import {
   isMobileBrowser,
   stationHeaders,
 } from "@/lib/station";
+import type { DashboardTab } from "@/lib/dashboard-analytics";
 import { cn } from "@/lib/utils";
 
-type ViewMode = "kanban" | "table";
+type ViewMode = "kanban" | "table" | "dashboard";
 
-async function fetchJobs(): Promise<Job[]> {
-  const response = await fetch("/api/jobs");
+async function fetchJobs(processId?: number): Promise<Job[]> {
+  const query = processId ? `?process_id=${processId}` : "";
+  const response = await fetch(`/api/jobs${query}`);
   if (!response.ok) {
     throw new Error("Failed to load jobs");
   }
   return response.json();
 }
 
-function statusLabelFor(status: JobStatus): string {
-  return PIPELINE.find((stage) => stage.key === status)?.label ?? status;
+function statusLabelFor(status: JobStatus, pipeline: ProcessStage[]): string {
+  return pipeline.find((stage) => stage.status_key === status)?.label ?? status;
 }
 
 function App() {
@@ -46,13 +53,17 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<ViewMode>("kanban");
+  const [dashboardTab, setDashboardTab] = useState<DashboardTab>("overview");
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [deletingTask, setDeletingTask] = useState(false);
   const [teamMembers, setTeamMembers] = useState<TeamMemberRecord[]>([]);
   const [teamPanelOpen, setTeamPanelOpen] = useState(false);
+  const [processes, setProcesses] = useState<ProcessRecord[]>([]);
+  const [processPanelOpen, setProcessPanelOpen] = useState(false);
+  const [selectedProcessId, setSelectedProcessId] = useState<number | null>(null);
   const [newAssignee, setNewAssignee] = useState("");
   const [jobId, setJobId] = useState("");
-  const [clientPhone, setClientPhone] = useState("");
+  const [newJobProcessId, setNewJobProcessId] = useState("");
   const [description, setDescription] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [workstationId, setWorkstationId] = useState<string | null>(() =>
@@ -60,6 +71,23 @@ function App() {
   );
 
   const assigneeOptions = teamMembers.length > 0 ? teamMembers : TEAM_MEMBERS;
+
+  const selectedProcess = useMemo(
+    () => processes.find((entry) => entry.process_id === selectedProcessId) ?? null,
+    [processes, selectedProcessId]
+  );
+
+  const activePipeline = useMemo<ProcessStage[]>(
+    () =>
+      selectedProcess?.statuses ??
+      PIPELINE.map((stage, index) => ({
+        status_key: stage.key,
+        label: stage.label,
+        sort_order: index,
+        color: stage.color,
+      })),
+    [selectedProcess]
+  );
 
   const selectedJob = useMemo(
     () => jobs.find((job) => job.task_id === selectedTaskId) ?? null,
@@ -78,10 +106,31 @@ function App() {
     }
   }, []);
 
-  const loadJobs = useCallback(async () => {
+  const loadProcesses = useCallback(async () => {
+    try {
+      const data = await fetchProcesses();
+      setProcesses(data);
+      setSelectedProcessId((current) => {
+        if (current && data.some((entry) => entry.process_id === current)) {
+          return current;
+        }
+        return data[0]?.process_id ?? null;
+      });
+      setNewJobProcessId((current) => {
+        if (current && data.some((entry) => String(entry.process_id) === current)) {
+          return current;
+        }
+        return data[0] ? String(data[0].process_id) : "";
+      });
+    } catch {
+      setProcesses([]);
+    }
+  }, []);
+
+  const loadJobs = useCallback(async (processId?: number | null) => {
     setError(null);
     try {
-      const data = await fetchJobs();
+      const data = await fetchJobs(processId ?? undefined);
       setJobs(data);
       setSelectedTaskId((current) =>
         current && data.some((job) => job.task_id === current) ? current : null
@@ -94,18 +143,25 @@ function App() {
   }, []);
 
   useEffect(() => {
-    void loadJobs();
+    void loadProcesses();
     void loadTeamMembers();
-  }, [loadJobs, loadTeamMembers]);
+  }, [loadProcesses, loadTeamMembers]);
+
+  useEffect(() => {
+    if (selectedProcessId === null) return;
+    setNewJobProcessId(String(selectedProcessId));
+    setLoading(true);
+    void loadJobs(selectedProcessId);
+  }, [selectedProcessId, loadJobs]);
 
   async function handleAddJob(event: React.FormEvent) {
     event.preventDefault();
-    if (!jobId.trim() || !clientPhone.trim()) return;
+    if (!jobId.trim() || !newJobProcessId) return;
 
     setSubmitting(true);
     const body = new FormData();
     body.append("job_id", jobId.trim());
-    body.append("client_phone", clientPhone.trim());
+    body.append("process_id", newJobProcessId);
     body.append("description", description.trim());
     const member = newAssignee
       ? findTeamMember(assigneeOptions, newAssignee)
@@ -117,11 +173,10 @@ function App() {
 
     await fetch("/jobs", { method: "POST", body });
     setJobId("");
-    setClientPhone("");
     setDescription("");
     setNewAssignee("");
     setSubmitting(false);
-    await loadJobs();
+    await loadJobs(selectedProcessId);
   }
 
   async function saveTask(taskId: string, data: TaskFormData) {
@@ -200,7 +255,7 @@ function App() {
           ? {
               ...entry,
               status: targetStatus,
-              status_label: statusLabelFor(targetStatus),
+              status_label: statusLabelFor(targetStatus, activePipeline),
             }
           : entry
       )
@@ -228,7 +283,7 @@ function App() {
       return;
     }
 
-    await loadJobs();
+    await loadJobs(selectedProcessId);
   }
 
   function openTask(job: Job) {
@@ -238,6 +293,10 @@ function App() {
   function handleMenuAction(action: AppMenuAction) {
     if (action === "team-members") {
       setTeamPanelOpen(true);
+      return;
+    }
+    if (action === "processes") {
+      setProcessPanelOpen(true);
       return;
     }
   }
@@ -276,15 +335,20 @@ function App() {
               />
             </label>
             <label className="flex min-w-[140px] flex-1 flex-col gap-1">
-              <span className="pl-3 text-xs font-medium text-muted-foreground">Customer Phone</span>
-              <input
-                type="text"
-                value={clientPhone}
-                onChange={(e) => setClientPhone(e.target.value)}
-                placeholder="Add customer phone"
+              <span className="pl-3 text-xs font-medium text-muted-foreground">Process</span>
+              <select
+                value={newJobProcessId}
+                onChange={(e) => setNewJobProcessId(e.target.value)}
                 required
-                className="h-10 rounded-lg border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground/45"
-              />
+                className="h-10 rounded-lg border border-input bg-background pl-3 pr-10 text-sm text-foreground"
+              >
+                <option value="">Select process</option>
+                {processes.map((process) => (
+                  <option key={process.process_id} value={process.process_id}>
+                    {process.name}
+                  </option>
+                ))}
+              </select>
             </label>
             <label className="flex min-w-[120px] flex-1 flex-col gap-1">
               <span className="pl-3 text-xs font-medium text-muted-foreground">Assignee</span>
@@ -321,7 +385,12 @@ function App() {
           </form>
         </section>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <ProcessSelector
+            processes={processes}
+            selectedProcessId={selectedProcessId}
+            onSelect={setSelectedProcessId}
+          />
           <button
             type="button"
             onClick={() => setView("kanban")}
@@ -348,22 +417,44 @@ function App() {
             <Table2 className="h-4 w-4" />
             Table
           </button>
+          <button
+            type="button"
+            onClick={() => setView("dashboard")}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-full px-4 py-1.5 text-sm font-medium transition-colors",
+              view === "dashboard"
+                ? "bg-primary text-primary-foreground shadow-sm"
+                : "border border-border bg-card text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <BarChart3 className="h-4 w-4" />
+            Dashboard
+          </button>
         </div>
 
         {view === "kanban" ? (
           <KanbanBoard
             jobs={jobs}
+            pipeline={activePipeline}
             loading={loading}
             selectedTaskId={selectedTaskId}
             onMoveJob={moveJob}
             onSelectTask={openTask}
           />
-        ) : (
+        ) : view === "table" ? (
           <JobsTable
             jobs={jobs}
             loading={loading}
             selectedTaskId={selectedTaskId}
             onSelectTask={openTask}
+          />
+        ) : (
+          <DashboardPanel
+            jobs={jobs}
+            pipeline={activePipeline}
+            loading={loading}
+            tab={dashboardTab}
+            onTabChange={setDashboardTab}
           />
         )}
       </main>
@@ -383,7 +474,21 @@ function App() {
         members={teamMembers}
         onClose={() => setTeamPanelOpen(false)}
         onChange={setTeamMembers}
-        onRefresh={() => void loadJobs()}
+        onRefresh={() => void loadJobs(selectedProcessId)}
+      />
+
+      <ProcessesPanel
+        open={processPanelOpen}
+        processes={processes}
+        onClose={() => setProcessPanelOpen(false)}
+        onChange={(next) => {
+          setProcesses(next);
+          setSelectedProcessId((current) =>
+            current && next.some((entry) => entry.process_id === current)
+              ? current
+              : next[0]?.process_id ?? null
+          );
+        }}
       />
     </div>
   );

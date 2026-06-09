@@ -351,10 +351,7 @@
     <main>
       <div class="status-grid" id="status-grid" hidden>
         <h2>Select your station</h2>
-        <button type="button" class="status-btn" data-station="pre_work">Pre-Work</button>
-        <button type="button" class="status-btn" data-station="machining">Machining</button>
-        <button type="button" class="status-btn" data-station="qc">QC</button>
-        <button type="button" class="status-btn" data-station="dispatch">Dispatch</button>
+        <div id="status-buttons"></div>
       </div>
       <div id="home-error-toast" hidden role="alert"></div>
     </main>
@@ -418,28 +415,17 @@
 
   <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
   <script>
-    const STATIONS = {
-      pre_work: "Pre-Work",
-      machining: "Machining",
-      qc: "QC",
-      dispatch: "Dispatch",
-    };
-
-    const STATION_COLORS = {
-      pre_work: "#6366f1",
-      machining: "#f59e0b",
-      qc: "#10b981",
-      dispatch: "#22c55e",
-    };
+    const STATIONS = {};
+    const STATION_COLORS = {};
 
     const TOKEN_KEY = "werqr_device_token";
     const WS_KEY = "werqr_device_id";
     const SUCCESS_DISPLAY_MS = 2800;
 
     const params = new URLSearchParams(window.location.search);
-    const stationParam = (params.get("station") || "").trim().toLowerCase();
-    const station = STATIONS[stationParam] ? stationParam : null;
-    const isScanPage = !!station;
+    let stationParam = (params.get("station") || "").trim().toLowerCase();
+    let station = null;
+    let isScanPage = false;
 
     const homePage = document.getElementById("home-page");
     const scanPage = document.getElementById("scan-page");
@@ -535,11 +521,41 @@
     }
 
     function setStationPill(el, stationKey) {
-      el.textContent = STATIONS[stationKey];
+      el.textContent = STATIONS[stationKey] || stationKey;
       el.style.backgroundColor = STATION_COLORS[stationKey] || "#64748b";
     }
 
-    applyStationButtonColors();
+    function renderStatusButtons(statuses) {
+      const container = document.getElementById("status-buttons");
+      if (!container) return;
+      container.innerHTML = "";
+      statuses.forEach((entry) => {
+        STATIONS[entry.status_key] = entry.label;
+        STATION_COLORS[entry.status_key] = entry.color;
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "status-btn";
+        btn.setAttribute("data-station", entry.status_key);
+        btn.textContent = entry.label;
+        btn.style.backgroundColor = entry.color;
+        btn.addEventListener("click", () => goToStation(entry.status_key));
+        container.appendChild(btn);
+      });
+    }
+
+    async function loadFloorStatuses() {
+      const res = await fetch("/api/floor/statuses", {
+        headers: { Accept: "application/json" },
+      });
+      if (!res.ok) {
+        throw new Error("Could not load stations.");
+      }
+      const statuses = await res.json();
+      renderStatusButtons(statuses);
+      station = STATIONS[stationParam] ? stationParam : null;
+      isScanPage = !!station;
+      return statuses;
+    }
 
     async function validateToken(token) {
       const headers = token ? { "X-Device-Token": token } : {};
@@ -630,12 +646,6 @@
       } catch (err) {
         showError(err.message || "Registration failed");
       }
-    });
-
-    document.querySelectorAll(".status-btn").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        goToStation(btn.getAttribute("data-station"));
-      });
     });
 
     document.getElementById("timing-buttons").addEventListener("click", (event) => {
@@ -795,33 +805,39 @@
       }
     }
 
-    if (isScanPage) {
-      homePage.hidden = true;
-      scanPage.hidden = false;
-      setStationPill(stationLabel, station);
+    loadFloorStatuses()
+      .then(() => {
+        if (isScanPage) {
+          homePage.hidden = true;
+          scanPage.hidden = false;
+          setStationPill(stationLabel, station);
 
-      bootstrapDeviceSession().then((ready) => {
-        if (!ready) {
-          window.location.replace("/scan");
-          return;
+          return bootstrapDeviceSession().then((ready) => {
+            if (!ready) {
+              window.location.replace("/scan");
+              return;
+            }
+            updateDeviceHeader();
+            return startScanner().catch((err) => {
+              showError(
+                "Camera blocked. Use HTTPS and allow camera access. " + (err.message || "")
+              );
+            });
+          });
         }
-        updateDeviceHeader();
-        startScanner().catch((err) => {
-          showError(
-            "Camera blocked. Use HTTPS and allow camera access. " + (err.message || "")
-          );
-        });
-      });
-    } else {
-      homePage.hidden = false;
-      scanPage.hidden = true;
-      setupPanel.hidden = true;
-      statusGrid.hidden = true;
 
-      bootstrapDeviceSession().then(() => {
-        updateHomeDeviceSection();
+        homePage.hidden = false;
+        scanPage.hidden = true;
+        setupPanel.hidden = true;
+        statusGrid.hidden = true;
+
+        return bootstrapDeviceSession().then(() => {
+          updateHomeDeviceSection();
+        });
+      })
+      .catch((err) => {
+        showError(err.message || "Could not load stations.");
       });
-    }
 
     window.addEventListener("beforeunload", () => {
       if (scanner && scanner.isScanning) {

@@ -101,7 +101,7 @@ export function JobsTable({
               <th className="w-10 pl-2 pr-0 py-2 font-medium text-muted-foreground" aria-label="QR" />
               <th className="px-2 py-2 font-medium text-muted-foreground">Job Name</th>
               <th className="px-2 py-2 font-medium text-muted-foreground">Assignee</th>
-              <th className="px-2 py-2 font-medium text-muted-foreground">Customer Phone</th>
+              <th className="px-2 py-2 font-medium text-muted-foreground">Process</th>
               <th className="px-2 py-2 font-medium text-muted-foreground">Description</th>
               <th className="px-2 py-2 font-medium text-muted-foreground">Status</th>
               <th className="px-2 py-2 font-medium text-muted-foreground">Created</th>
@@ -140,7 +140,7 @@ export function JobsTable({
                   />
                 </td>
                 <td className="px-2 py-1 align-middle text-muted-foreground">
-                  {job.client_phone}
+                  {job.process_name || "—"}
                 </td>
                 <td className="max-w-[180px] truncate px-2 py-1 align-middle text-muted-foreground">
                   {(job.description ?? "").trim() || "—"}

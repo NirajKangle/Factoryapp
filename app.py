@@ -11,6 +11,7 @@ from pathlib import Path
 from flask import Flask, jsonify, redirect, render_template, request, send_from_directory, url_for
 
 from bootstrap import ensure_n8n_running, load_dotenv_file
+import processes as process_workflows
 from station_auth import DEVICE_TOKEN_COOKIE, extract_device_token, generate_device_token
 from webhooks import dispatch_status_change_async
 
@@ -780,6 +781,7 @@ def ensure_schema():
                 migrate_postgres_job_people_columns(conn)
                 migrate_mes_schema(conn)
                 migrate_team_members(conn)
+                process_workflows.ensure_processes_schema(conn, DB_BACKEND)
         return
 
     with get_db() as conn:
@@ -822,6 +824,7 @@ def ensure_schema():
         migrate_job_people_columns(conn)
         migrate_mes_schema(conn)
         migrate_team_members(conn)
+        process_workflows.ensure_processes_schema(conn, DB_BACKEND)
 
 
 def migrate_team_members(conn):
@@ -1353,12 +1356,33 @@ def parse_checklist(value):
     return parsed if isinstance(parsed, list) else []
 
 
-def row_to_job(row):
+def row_to_job(row, conn=None):
     job = dict(row) if not isinstance(row, dict) else row
+    process_id = job.get("process_id")
+    status = job["status"]
+    status_label = job.get("status_label_from_join") or STATUS_LABELS.get(status, status)
+    status_color = job.get("status_color_from_join")
+
+    pipeline = []
+    if conn is not None and process_id is not None:
+        status_label = status_label if job.get("status_label_from_join") else (
+            process_workflows.get_status_labels(conn, DB_BACKEND, process_id).get(
+                status, status
+            )
+        )
+        pipeline = process_workflows.get_status_pipeline(conn, DB_BACKEND, process_id)
+        if not status_color and pipeline:
+            status_color = next(
+                (entry["color"] for entry in pipeline if entry["status_key"] == status),
+                None,
+            )
+
     return {
         "task_id": job["task_id"],
         "job_id": job["job_id"],
-        "client_phone": job["client_phone"],
+        "process_id": process_id,
+        "process_name": job.get("process_name") or "",
+        "client_phone": job.get("client_phone") or "",
         "client_email": job.get("client_email") or "",
         "description": job.get("description") or "",
         "author": job.get("author") or DEFAULT_AUTHOR_NAME,
@@ -1371,23 +1395,40 @@ def row_to_job(row):
         "tracking_mode": job.get("tracking_mode") or "unit",
         "progress_percent": int(job.get("progress_percent") or 0),
         "operations_checklist": parse_checklist(job.get("operations_checklist")),
-        "status": job["status"],
-        "status_label": STATUS_LABELS.get(job["status"], job["status"]),
+        "status": status,
+        "status_label": status_label,
+        "status_color": status_color,
+        "pipeline": pipeline,
         "created_at": as_datetime(job["created_at"]),
         "updated_at": as_datetime(job["updated_at"]),
     }
 
 
 JOB_SELECT_COLUMNS = (
-    "task_id, job_id, client_phone, client_email, description, author, "
-    "assignee_name, assignee_photo, total_requested_quantity, good_parts_count, "
-    "scrap_parts_count, operator_id, tracking_mode, progress_percent, "
-    "operations_checklist, status, created_at, updated_at"
+    "j.task_id, j.job_id, j.process_id, p.name AS process_name, "
+    "j.client_phone, j.client_email, j.description, j.author, "
+    "j.assignee_name, j.assignee_photo, j.total_requested_quantity, j.good_parts_count, "
+    "j.scrap_parts_count, j.operator_id, j.tracking_mode, j.progress_percent, "
+    "j.operations_checklist, j.status, ps.label AS status_label_from_join, "
+    "ps.color AS status_color_from_join, j.created_at, j.updated_at"
 )
 
+JOB_FROM_CLAUSE = """
+    FROM jobs j
+    LEFT JOIN processes p ON p.process_id = j.process_id
+    LEFT JOIN process_statuses ps
+      ON ps.process_id = j.process_id AND ps.status_key = j.status
+"""
 
-def fetch_jobs():
+
+def fetch_jobs(process_id=None):
     with get_db() as conn:
+        where_clause = ""
+        params = ()
+        if process_id is not None:
+            where_clause = "WHERE j.process_id = ?" if DB_BACKEND == "sqlite" else "WHERE j.process_id = %s"
+            params = (process_id,)
+
         if DB_BACKEND == "postgres":
             import psycopg2.extras
 
@@ -1395,22 +1436,27 @@ def fetch_jobs():
                 cur.execute(
                     f"""
                     SELECT {JOB_SELECT_COLUMNS}
-                    FROM jobs
-                    ORDER BY updated_at DESC
-                    """
+                    {JOB_FROM_CLAUSE}
+                    {where_clause}
+                    ORDER BY j.updated_at DESC
+                    """,
+                    params,
                 )
                 rows = cur.fetchall()
         else:
-            cur = conn.execute(
-                f"""
+            query = f"""
                 SELECT {JOB_SELECT_COLUMNS}
-                FROM jobs
-                ORDER BY updated_at DESC
-                """
-            )
+                {JOB_FROM_CLAUSE}
+                {where_clause}
+                ORDER BY j.updated_at DESC
+            """
+            if params:
+                cur = conn.execute(query, params)
+            else:
+                cur = conn.execute(query)
             rows = [dict(row) for row in cur.fetchall()]
 
-    return [row_to_job(row) for row in rows]
+        return [row_to_job(row, conn) for row in rows]
 
 
 def fetch_job_by_task_id(task_id):
@@ -1422,8 +1468,8 @@ def fetch_job_by_task_id(task_id):
                 cur.execute(
                     f"""
                     SELECT {JOB_SELECT_COLUMNS}
-                    FROM jobs
-                    WHERE task_id = %s
+                    {JOB_FROM_CLAUSE}
+                    WHERE j.task_id = %s
                     """,
                     (task_id,),
                 )
@@ -1432,19 +1478,19 @@ def fetch_job_by_task_id(task_id):
             row = conn.execute(
                 f"""
                 SELECT {JOB_SELECT_COLUMNS}
-                FROM jobs
-                WHERE task_id = ?
+                {JOB_FROM_CLAUSE}
+                WHERE j.task_id = ?
                 """,
                 (task_id,),
             ).fetchone()
             row = dict(row) if row else None
 
-    return row_to_job(row) if row else None
+        return row_to_job(row, conn) if row else None
 
 
 def create_job(
     job_id,
-    client_phone,
+    client_phone="",
     description="",
     author=None,
     assignee_name=None,
@@ -1452,6 +1498,7 @@ def create_job(
     total_requested_quantity=1,
     client_email="",
     tracking_mode="unit",
+    process_id=None,
 ):
     author = author or DEFAULT_AUTHOR_NAME
     assignee_name, assignee_photo = resolve_assignee(assignee_name, assignee_photo)
@@ -1459,6 +1506,16 @@ def create_job(
     total_requested_quantity = max(1, int(total_requested_quantity or 1))
 
     with get_db() as conn:
+        if process_id is None:
+            process_id = process_workflows.get_default_process_id(conn, DB_BACKEND)
+        if process_id is None:
+            raise ValueError("No process configured.")
+
+        status_order = process_workflows.get_status_order(conn, DB_BACKEND, process_id)
+        if not status_order:
+            raise ValueError("Process has no workflow steps.")
+        initial_status = status_order[0]
+
         task_id = generate_task_id(conn)
         recorded_at = datetime.now(timezone.utc)
         if DB_BACKEND == "postgres":
@@ -1466,16 +1523,17 @@ def create_job(
                 cur.execute(
                     """
                     INSERT INTO jobs (
-                      task_id, job_id, client_phone, client_email, description,
+                      task_id, job_id, process_id, client_phone, client_email, description,
                       author, assignee_name, assignee_photo,
                       total_requested_quantity, tracking_mode, status
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pre_work')
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         task_id,
                         job_id,
-                        client_phone,
+                        process_id,
+                        client_phone or "",
                         client_email or "",
                         description or "",
                         author,
@@ -1483,33 +1541,42 @@ def create_job(
                         assignee_photo,
                         total_requested_quantity,
                         tracking_mode,
+                        initial_status,
                     ),
                 )
                 cur.execute(
                     """
                     INSERT INTO status_update_history (
                       task_id, from_status, to_status, changed_at,
-                      recorded_at, operational_start_time
+                      recorded_at, operational_start_time, process_id
                     )
-                    VALUES (%s, NULL, 'pre_work', %s, %s, %s)
+                    VALUES (%s, NULL, %s, %s, %s, %s, %s)
                     """,
-                    (task_id, recorded_at, recorded_at, recorded_at),
+                    (
+                        task_id,
+                        initial_status,
+                        recorded_at,
+                        recorded_at,
+                        recorded_at,
+                        process_id,
+                    ),
                 )
         else:
             ts = recorded_at.isoformat()
             conn.execute(
                 """
                 INSERT INTO jobs (
-                  task_id, job_id, client_phone, client_email, description,
+                  task_id, job_id, process_id, client_phone, client_email, description,
                   author, assignee_name, assignee_photo,
                   total_requested_quantity, tracking_mode, status
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pre_work')
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     task_id,
                     job_id,
-                    client_phone,
+                    process_id,
+                    client_phone or "",
                     client_email or "",
                     description or "",
                     author,
@@ -1517,17 +1584,18 @@ def create_job(
                     assignee_photo,
                     total_requested_quantity,
                     tracking_mode,
+                    initial_status,
                 ),
             )
             conn.execute(
                 """
                 INSERT INTO status_update_history (
                   task_id, from_status, to_status, changed_at,
-                  recorded_at, operational_start_time
+                  recorded_at, operational_start_time, process_id
                 )
-                VALUES (?, NULL, 'pre_work', ?, ?, ?)
+                VALUES (?, NULL, ?, ?, ?, ?, ?)
                 """,
-                (task_id, ts, ts, ts),
+                (task_id, initial_status, ts, ts, ts, process_id),
             )
         return task_id
 
@@ -1687,9 +1755,6 @@ def set_job_status(
     operator_id=None,
     operational_start=None,
 ):
-    if new_status not in STATUS_ORDER:
-        return None, "Invalid status."
-
     recorded_at = datetime.now(timezone.utc)
     operational_start_time = parse_operational_start(operational_start)
 
@@ -1697,21 +1762,28 @@ def set_job_status(
         if DB_BACKEND == "postgres":
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT status FROM jobs WHERE task_id = %s FOR UPDATE",
+                    "SELECT status, process_id FROM jobs WHERE task_id = %s FOR UPDATE",
                     (task_id,),
                 )
                 row = cur.fetchone()
         else:
             row = conn.execute(
-                "SELECT status FROM jobs WHERE task_id = ?",
+                "SELECT status, process_id FROM jobs WHERE task_id = ?",
                 (task_id,),
             ).fetchone()
-            row = (row["status"],) if row else None
+            row = (row["status"], row["process_id"]) if row else None
 
         if row is None:
             return None, "Job not found."
 
-        current_status = row[0]
+        current_status, process_id = row[0], row[1]
+        if process_id is None:
+            process_id = process_workflows.get_default_process_id(conn, DB_BACKEND)
+
+        if not process_workflows.validate_status_for_process(
+            conn, DB_BACKEND, process_id, new_status
+        ):
+            return None, "Invalid status for this process."
         if current_status == new_status:
             return new_status, None
 
@@ -1739,9 +1811,10 @@ def set_job_status(
                     """
                     INSERT INTO status_update_history (
                       task_id, from_status, to_status, changed_at,
-                      recorded_at, operational_start_time, device_name, operator_id
+                      recorded_at, operational_start_time, device_name, operator_id,
+                      process_id
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         task_id,
@@ -1752,6 +1825,7 @@ def set_job_status(
                         operational_start_time,
                         device_name,
                         operator_id,
+                        process_id,
                     ),
                 )
         else:
@@ -1779,9 +1853,10 @@ def set_job_status(
                 """
                 INSERT INTO status_update_history (
                   task_id, from_status, to_status, changed_at,
-                  recorded_at, operational_start_time, device_name, operator_id
+                  recorded_at, operational_start_time, device_name, operator_id,
+                  process_id
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     task_id,
@@ -1792,17 +1867,22 @@ def set_job_status(
                     op_ts,
                     device_name,
                     operator_id,
+                    process_id,
                 ),
             )
 
     job = fetch_job_by_task_id(task_id)
     if job:
+        with get_db() as conn:
+            status_labels = process_workflows.get_status_labels(
+                conn, DB_BACKEND, job.get("process_id")
+            )
         dispatch_status_change_async(
             batch_id=task_id,
             from_status=current_status,
             to_status=new_status,
             job=job_payload(job),
-            status_labels=STATUS_LABELS,
+            status_labels=status_labels,
             device_name=device_name,
             operator_id=operator_id or job.get("operator_id"),
         )
@@ -1872,33 +1952,37 @@ def move_job_status(task_id, direction=1):
         if DB_BACKEND == "postgres":
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT status FROM jobs WHERE task_id = %s FOR UPDATE",
+                    "SELECT status, process_id FROM jobs WHERE task_id = %s FOR UPDATE",
                     (task_id,),
                 )
                 row = cur.fetchone()
         else:
             row = conn.execute(
-                "SELECT status FROM jobs WHERE task_id = ?",
+                "SELECT status, process_id FROM jobs WHERE task_id = ?",
                 (task_id,),
             ).fetchone()
-            row = (row["status"],) if row else None
+            row = (row["status"], row["process_id"]) if row else None
 
         if row is None:
             return None, "Job not found."
 
-        current_status = row[0]
+        current_status, process_id = row[0], row[1]
+        if process_id is None:
+            process_id = process_workflows.get_default_process_id(conn, DB_BACKEND)
+
+        status_order = process_workflows.get_status_order(conn, DB_BACKEND, process_id)
         try:
-            current_index = STATUS_ORDER.index(current_status)
+            current_index = status_order.index(current_status)
         except ValueError:
             return None, "Unknown job status."
 
         new_index = current_index + direction
         if new_index < 0:
             return None, "Job is already at the first stage."
-        if new_index >= len(STATUS_ORDER):
+        if new_index >= len(status_order):
             return None, "Job is already at the final stage."
 
-        new_status = STATUS_ORDER[new_index]
+        new_status = status_order[new_index]
         return set_job_status(task_id, new_status)
 
 
@@ -1914,7 +1998,9 @@ def job_payload(job):
     return {
         "task_id": job["task_id"],
         "job_id": job["job_id"],
-        "client_phone": job["client_phone"],
+        "process_id": job.get("process_id"),
+        "process_name": job.get("process_name") or "",
+        "client_phone": job.get("client_phone") or "",
         "client_email": job.get("client_email") or "",
         "description": job["description"],
         "author": job["author"],
@@ -1927,6 +2013,7 @@ def job_payload(job):
         "tracking_mode": job.get("tracking_mode") or "unit",
         "progress_percent": job.get("progress_percent", 0),
         "operations_checklist": job.get("operations_checklist") or [],
+        "pipeline": job.get("pipeline") or [],
         "status": job["status"],
         "status_label": job["status_label"],
         "created_at": job["created_at"].isoformat(),
@@ -2024,6 +2111,63 @@ def api_list_devices():
     return jsonify(list_devices())
 
 
+@app.route("/api/processes", methods=["GET", "POST"])
+def api_processes():
+    if request.method == "GET":
+        with get_db() as conn:
+            return jsonify(process_workflows.fetch_all_processes(conn, DB_BACKEND))
+
+    payload = request.get_json(silent=True) or {}
+    name = (payload.get("name") or "").strip()
+    statuses = payload.get("statuses")
+    with get_db() as conn:
+        process, error = process_workflows.create_process(
+            conn, DB_BACKEND, name, statuses_payload=statuses
+        )
+    if error:
+        return jsonify({"error": error}), 400
+    return jsonify(process), 201
+
+
+@app.route("/api/processes/<int:process_id>", methods=["GET", "PATCH", "DELETE"])
+def api_process_detail(process_id):
+    if request.method == "GET":
+        with get_db() as conn:
+            process = process_workflows.fetch_process(conn, DB_BACKEND, process_id)
+        if not process:
+            return jsonify({"error": "Process not found."}), 404
+        return jsonify(process)
+
+    if request.method == "DELETE":
+        with get_db() as conn:
+            deleted, error = process_workflows.delete_process(conn, DB_BACKEND, process_id)
+        if error:
+            return jsonify({"error": error}), 400
+        if not deleted:
+            return jsonify({"error": "Process not found."}), 404
+        return jsonify({"ok": True})
+
+    payload = request.get_json(silent=True) or {}
+    with get_db() as conn:
+        process, error = process_workflows.update_process(
+            conn,
+            DB_BACKEND,
+            process_id,
+            name=payload.get("name") if "name" in payload else None,
+            statuses_payload=payload.get("statuses") if "statuses" in payload else None,
+        )
+    if error:
+        status = 404 if error == "Process not found." else 400
+        return jsonify({"error": error}), status
+    return jsonify(process)
+
+
+@app.route("/api/floor/statuses", methods=["GET"])
+def api_floor_statuses():
+    with get_db() as conn:
+        return jsonify(process_workflows.fetch_all_floor_statuses(conn, DB_BACKEND))
+
+
 @app.route("/api/team-members", methods=["GET", "POST"])
 def api_team_members():
     if request.method == "GET":
@@ -2110,13 +2254,8 @@ def floor_scan_move():
 
     parsed_id, status_override = parse_scan_raw(raw)
     task_id = explicit_task_id or parsed_id
-    if status_override and status_override in STATUS_ORDER:
-        station = status_override
-
     if not task_id:
         return jsonify({"error": "Could not read task ID from scan."}), 400
-    if station not in STATUS_ORDER:
-        return jsonify({"error": "Invalid or missing station."}), 400
 
     resolved = resolve_task_id(task_id)
     if not resolved:
@@ -2126,9 +2265,22 @@ def floor_scan_move():
     if not job_before:
         return jsonify({"error": "Task not found."}), 404
 
+    with get_db() as conn:
+        process_id = job_before.get("process_id") or process_workflows.get_default_process_id(
+            conn, DB_BACKEND
+        )
+        status_order = process_workflows.get_status_order(conn, DB_BACKEND, process_id)
+        status_labels = process_workflows.get_status_labels(conn, DB_BACKEND, process_id)
+
+    if status_override and status_override in status_order:
+        station = status_override
+
+    if not station or station not in status_order:
+        return jsonify({"error": "Invalid or missing station for this job's process."}), 400
+
     from_status = job_before["status"]
-    from_label = STATUS_LABELS.get(from_status, from_status)
-    to_label = STATUS_LABELS.get(station, station)
+    from_label = status_labels.get(from_status, from_status)
+    to_label = status_labels.get(station, station)
 
     if from_status == station:
         return jsonify(
@@ -2213,19 +2365,25 @@ def add_job():
     assignee_photo = (
         request.form.get("assignee_photo") or payload.get("assignee_photo") or ""
     ).strip() or None
+    process_id_raw = request.form.get("process_id") or payload.get("process_id")
+    try:
+        process_id = int(process_id_raw) if process_id_raw not in (None, "") else None
+    except (TypeError, ValueError):
+        process_id = None
 
-    if not job_id or not client_phone:
+    if not job_id or process_id is None:
         if request.accept_mimetypes.best == "application/json":
-            return jsonify({"error": "job_id and client_phone are required"}), 400
+            return jsonify({"error": "job_id and process_id are required"}), 400
         return redirect(url_for("index"))
 
     try:
         task_id = create_job(
             job_id,
-            client_phone,
+            client_phone=client_phone,
             description=description,
             assignee_name=assignee_name,
             assignee_photo=assignee_photo,
+            process_id=process_id,
         )
     except sqlite3.IntegrityError:
         task_id = None
@@ -2372,7 +2530,8 @@ def revert_job(task_id):
 
 @app.route("/api/jobs")
 def api_jobs():
-    jobs = fetch_jobs()
+    process_id = request.args.get("process_id", type=int)
+    jobs = fetch_jobs(process_id=process_id)
     return jsonify([job_payload(job) for job in jobs])
 
 

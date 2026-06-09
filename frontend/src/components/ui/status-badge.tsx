@@ -4,12 +4,13 @@ import { cn } from "@/lib/utils";
 export interface StatusBadgeProps {
   status: JobStatus;
   label?: string;
+  color?: string;
   className?: string;
 }
 
-export function StatusBadge({ status, label, className }: StatusBadgeProps) {
+export function StatusBadge({ status, label, color, className }: StatusBadgeProps) {
   const stage = PIPELINE.find((entry) => entry.key === status);
-  const color = stage?.color ?? "#64748b";
+  const resolvedColor = color ?? stage?.color ?? "#64748b";
   const text = label ?? stage?.label ?? status;
 
   return (
@@ -18,7 +19,7 @@ export function StatusBadge({ status, label, className }: StatusBadgeProps) {
         "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium text-white",
         className
       )}
-      style={{ backgroundColor: color }}
+      style={{ backgroundColor: resolvedColor }}
     >
       {text}
     </span>

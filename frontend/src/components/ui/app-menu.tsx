@@ -4,6 +4,7 @@ import {
   Menu,
   Settings,
   Users,
+  Workflow,
   Wrench,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -11,10 +12,16 @@ import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-export type AppMenuAction = "team-members" | "reports" | "settings" | "tools";
+export type AppMenuAction =
+  | "team-members"
+  | "processes"
+  | "reports"
+  | "settings"
+  | "tools";
 
 export const APP_MENU_ITEMS: { id: AppMenuAction; label: string; icon: LucideIcon }[] = [
   { id: "team-members", label: "Team Members", icon: Users },
+  { id: "processes", label: "Processes", icon: Workflow },
   { id: "reports", label: "Reports", icon: BarChart3 },
   { id: "settings", label: "Settings", icon: Settings },
   { id: "tools", label: "Tools", icon: Wrench },

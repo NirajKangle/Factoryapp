@@ -18,23 +18,28 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { TaskQrCode } from "@/components/ui/task-qr-code";
-import { PIPELINE, type Job, type JobStatus } from "@/lib/job-status";
+import { type Job, type JobStatus, type ProcessStage } from "@/lib/job-status";
 import { cn } from "@/lib/utils";
 
 export interface KanbanBoardProps {
   jobs: Job[];
+  pipeline: ProcessStage[];
   loading?: boolean;
   selectedTaskId: string | null;
   onMoveJob: (taskId: string, targetStatus: JobStatus) => Promise<void>;
   onSelectTask: (job: Job) => void;
 }
 
-function isJobStatus(value: string): value is JobStatus {
-  return PIPELINE.some((stage) => stage.key === value);
+function isJobStatus(value: string, pipeline: ProcessStage[]): value is JobStatus {
+  return pipeline.some((stage) => stage.status_key === value);
 }
 
-function resolveDropStatus(overId: string, jobs: Job[]): JobStatus | null {
-  if (isJobStatus(overId)) {
+function resolveDropStatus(
+  overId: string,
+  jobs: Job[],
+  pipeline: ProcessStage[]
+): JobStatus | null {
+  if (isJobStatus(overId, pipeline)) {
     return overId;
   }
   const job = jobs.find((entry) => entry.task_id === overId);
@@ -54,6 +59,7 @@ function JobCardContent({ job }: { job: Job }) {
           <StatusBadge
             status={job.status}
             label={job.status_label}
+            color={job.status_color}
             className="px-2 py-0 text-[10px]"
           />
           <AssigneeDisplay
@@ -61,14 +67,8 @@ function JobCardContent({ job }: { job: Job }) {
             photo={job.assignee_photo}
             dense
           />
-          <p className="truncate text-xs text-muted-foreground">{job.client_phone}</p>
           {description ? (
             <p className="line-clamp-1 text-xs text-muted-foreground/90">{description}</p>
-          ) : null}
-          {job.status === "dispatch" ? (
-            <Badge variant="secondary" className="text-[10px] font-normal">
-              Ready for pickup
-            </Badge>
           ) : null}
         </div>
 
@@ -206,6 +206,7 @@ function KanbanColumn({
 
 export function KanbanBoard({
   jobs,
+  pipeline,
   loading = false,
   selectedTaskId,
   onMoveJob,
@@ -221,9 +222,11 @@ export function KanbanBoard({
     })
   );
 
-  const columns = PIPELINE.map((stage) => ({
-    ...stage,
-    jobs: jobs.filter((job) => job.status === stage.key),
+  const columns = pipeline.map((stage) => ({
+    key: stage.status_key,
+    label: stage.label,
+    color: stage.color,
+    jobs: jobs.filter((job) => job.status === stage.status_key),
   }));
 
   function handleDragStart(event: DragStartEvent) {
@@ -237,7 +240,7 @@ export function KanbanBoard({
       setOverStatus(null);
       return;
     }
-    setOverStatus(resolveDropStatus(String(event.over.id), jobs));
+    setOverStatus(resolveDropStatus(String(event.over.id), jobs, pipeline));
   }
 
   function handleDragEnd(event: DragEndEvent) {
@@ -251,7 +254,7 @@ export function KanbanBoard({
     if (!over) return;
 
     const taskId = String(active.id);
-    const targetStatus = resolveDropStatus(String(over.id), jobs);
+    const targetStatus = resolveDropStatus(String(over.id), jobs, pipeline);
     if (!targetStatus) return;
 
     void onMoveJob(taskId, targetStatus);
@@ -273,7 +276,12 @@ export function KanbanBoard({
       onDragEnd={handleDragEnd}
       onDragCancel={handleDragCancel}
     >
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div
+        className={cn(
+          "grid grid-cols-1 gap-4 md:grid-cols-2",
+          pipeline.length >= 4 ? "xl:grid-cols-4" : pipeline.length === 3 ? "xl:grid-cols-3" : "xl:grid-cols-2"
+        )}
+      >
         {columns.map((column) => (
           <KanbanColumn
             key={column.key}

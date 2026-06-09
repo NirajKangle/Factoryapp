@@ -7,7 +7,6 @@ import { TaskQrCode } from "@/components/ui/task-qr-code";
 import {
   findTeamMember,
   formatUpdatedAt,
-  PIPELINE,
   type Job,
   type JobStatus,
   type TeamMember,
@@ -368,8 +367,8 @@ export function TaskSidebar({
                   onChange={(e) => updateField("status", e.target.value as JobStatus)}
                   className="flex-1 rounded-lg border border-input bg-background px-3 py-2.5 text-sm text-foreground"
                 >
-                  {PIPELINE.map((stage) => (
-                    <option key={stage.key} value={stage.key}>
+                  {(job.pipeline ?? []).map((stage) => (
+                    <option key={stage.status_key} value={stage.status_key}>
                       {stage.label}
                     </option>
                   ))}

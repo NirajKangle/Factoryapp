@@ -1,6 +1,15 @@
 import type { StatusProps } from "@/components/ui/status";
 
-export type JobStatus = "pre_work" | "machining" | "qc" | "dispatch";
+export type JobStatus = string;
+
+export interface ProcessStage {
+  status_id?: number;
+  process_id?: number;
+  status_key: string;
+  label: string;
+  sort_order: number;
+  color: string;
+}
 
 export interface TeamMember {
   name: string;
@@ -12,6 +21,10 @@ export type TrackingMode = "unit" | "progress" | "checklist";
 export interface Job {
   task_id: string;
   job_id: string;
+  process_id?: number;
+  process_name?: string;
+  pipeline?: ProcessStage[];
+  status_color?: string;
   client_phone: string;
   client_email?: string;
   description: string;
