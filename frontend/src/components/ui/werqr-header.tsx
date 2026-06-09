@@ -48,13 +48,10 @@ export function WerqrHeader({
           scrolled,
       })}
     >
-      <nav className="mx-auto flex h-14 w-full max-w-6xl items-center justify-between gap-2 px-4 sm:px-6">
+      <nav className="mx-auto flex min-h-16 w-full max-w-6xl items-center justify-between gap-2 px-4 pb-2 pt-3 sm:px-6">
         <div className="flex min-w-0 flex-1 items-center gap-2 md:gap-4">
-          <a href="/" className="flex min-w-0 items-center gap-2.5 rounded-md p-1 hover:bg-accent">
+          <a href="/" className="flex min-w-0 items-center rounded-md p-1 hover:bg-accent">
             <WerqrLogo />
-            <span className="truncate text-2xl font-bold tracking-tight text-foreground">
-              Werqr
-            </span>
           </a>
 
           <a

@@ -2192,6 +2192,11 @@ def werqr_logo():
     return send_from_directory(REACT_DIST, "werqr-logo.png")
 
 
+@app.route("/werqr-logo-cropped.png")
+def werqr_logo_cropped():
+    return send_from_directory(REACT_DIST, "werqr-logo-cropped.png")
+
+
 @app.route("/jobs", methods=["POST"])
 def add_job():
     payload = request.get_json(silent=True) or {}
