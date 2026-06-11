@@ -10,7 +10,7 @@ from pathlib import Path
 
 from flask import Flask, jsonify, redirect, render_template, request, send_from_directory, url_for
 
-from bootstrap import ensure_n8n_running, load_dotenv_file
+from bootstrap import load_dotenv_file, start_n8n_in_background
 import processes as process_workflows
 from station_auth import DEVICE_TOKEN_COOKIE, extract_device_token, generate_device_token
 from webhooks import dispatch_status_change_async
@@ -2537,11 +2537,11 @@ def api_jobs():
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    ensure_n8n_running()
     configure_database()
     ensure_schema()
     if os.environ.get("WEBHOOK_URL", "").strip():
         logging.info("Status webhooks enabled for: %s", os.environ["WEBHOOK_URL"])
     else:
         logging.info("WEBHOOK_URL not set — status webhooks disabled")
+    start_n8n_in_background()
     app.run(debug=True, host="0.0.0.0", port=5000)

@@ -7,6 +7,7 @@ import os
 import socket
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -101,3 +102,13 @@ def ensure_n8n_running() -> None:
         N8N_STARTUP_TIMEOUT_SEC,
         N8N_PORT,
     )
+
+
+def start_n8n_in_background() -> None:
+    """Start n8n on a background thread so the Flask app can boot first."""
+    thread = threading.Thread(
+        target=ensure_n8n_running,
+        name="n8n-bootstrap",
+        daemon=True,
+    )
+    thread.start()
