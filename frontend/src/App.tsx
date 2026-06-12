@@ -28,6 +28,7 @@ import {
   getDeviceToken,
   getWorkstationId,
   isMobileBrowser,
+  restoreDeviceSession,
   stationHeaders,
 } from "@/lib/station";
 import type { DashboardTab } from "@/lib/dashboard-analytics";
@@ -69,6 +70,7 @@ function App() {
   const [workstationId, setWorkstationId] = useState<string | null>(() =>
     getWorkstationId()
   );
+  const [deviceReady, setDeviceReady] = useState(() => Boolean(getWorkstationId()));
 
   const assigneeOptions = teamMembers.length > 0 ? teamMembers : TEAM_MEMBERS;
 
@@ -140,6 +142,20 @@ function App() {
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  useEffect(() => {
+    if (isMobileBrowser()) {
+      setDeviceReady(true);
+      return;
+    }
+
+    void restoreDeviceSession().then((deviceId) => {
+      if (deviceId) {
+        setWorkstationId(deviceId);
+      }
+      setDeviceReady(true);
+    });
   }, []);
 
   useEffect(() => {
@@ -316,7 +332,7 @@ function App() {
           </div>
         )}
 
-        {!workstationId && !isMobileBrowser() && (
+        {!workstationId && !isMobileBrowser() && deviceReady && (
           <StationSetup onReady={(id) => setWorkstationId(id)} />
         )}
 

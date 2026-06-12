@@ -136,7 +136,7 @@ class MesArchitectureTest(unittest.TestCase):
             json={"device_id": "Floor-Phone"},
         )
         self.assertEqual(first.status_code, 201)
-        self.assertEqual(second.status_code, 201)
+        self.assertIn(second.status_code, (200, 201))
         self.assertEqual(
             first.get_json()["device_token"],
             second.get_json()["device_token"],

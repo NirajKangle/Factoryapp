@@ -396,6 +396,7 @@ def migrate_devices_table(conn):
                 cur.execute(
                     "ALTER TABLE devices RENAME COLUMN workstation_id TO device_name"
                 )
+        ensure_devices_last_ip_column(conn)
         return
 
     if sqlite_table_exists(conn, "workstations") and not sqlite_table_exists(conn, "devices"):
@@ -415,6 +416,164 @@ def migrate_devices_table(conn):
         conn.execute("ALTER TABLE devices DROP COLUMN station_status")
     if "workstation_id" in device_columns and "device_name" not in device_columns:
         conn.execute("ALTER TABLE devices RENAME COLUMN workstation_id TO device_name")
+    ensure_devices_last_ip_column(conn)
+
+
+def ensure_devices_last_ip_column(conn):
+    if DB_BACKEND == "postgres":
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = 'devices'
+                """
+            )
+            cols = {row[0] for row in cur.fetchall()}
+            if "last_ip" not in cols:
+                cur.execute("ALTER TABLE devices ADD COLUMN last_ip TEXT NOT NULL DEFAULT ''")
+        ensure_devices_client_id_column(conn)
+        return
+
+    cols = sqlite_columns(conn, "devices")
+    if "last_ip" not in cols:
+        conn.execute("ALTER TABLE devices ADD COLUMN last_ip TEXT NOT NULL DEFAULT ''")
+    ensure_devices_client_id_column(conn)
+
+
+def ensure_devices_client_id_column(conn):
+    if DB_BACKEND == "postgres":
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = 'devices'
+                """
+            )
+            cols = {row[0] for row in cur.fetchall()}
+            if "client_id" not in cols:
+                cur.execute("ALTER TABLE devices ADD COLUMN client_id TEXT UNIQUE")
+        return
+
+    cols = sqlite_columns(conn, "devices")
+    if "client_id" not in cols:
+        conn.execute("ALTER TABLE devices ADD COLUMN client_id TEXT")
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_client_id
+            ON devices (client_id)
+            WHERE client_id IS NOT NULL AND client_id != ''
+            """
+        )
+
+
+def client_ip():
+    forwarded = (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+    return forwarded or (request.remote_addr or "")
+
+
+def touch_device_ip(device_name, ip_address=None):
+    ip_address = (ip_address or "").strip()
+    if not device_name or not ip_address:
+        return
+    with get_db() as conn:
+        if DB_BACKEND == "postgres":
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE devices SET last_ip = %s WHERE device_name = %s",
+                    (ip_address, device_name),
+                )
+        else:
+            conn.execute(
+                "UPDATE devices SET last_ip = ? WHERE device_name = ?",
+                (ip_address, device_name),
+            )
+
+
+def touch_device_client_id(device_name, client_id=None):
+    client_id = (client_id or "").strip()
+    if not device_name or not client_id:
+        return
+    with get_db() as conn:
+        if DB_BACKEND == "postgres":
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE devices SET client_id = %s WHERE device_name = %s",
+                    (client_id, device_name),
+                )
+        else:
+            conn.execute(
+                "UPDATE devices SET client_id = ? WHERE device_name = ?",
+                (client_id, device_name),
+            )
+
+
+def fetch_device_by_client_id(client_id):
+    client_id = (client_id or "").strip()
+    if not client_id:
+        return None
+    with get_db() as conn:
+        if DB_BACKEND == "postgres":
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT device_name, device_token
+                    FROM devices WHERE client_id = %s
+                    """,
+                    (client_id,),
+                )
+                row = cur.fetchone()
+        else:
+            row = conn.execute(
+                """
+                SELECT device_name, device_token
+                FROM devices WHERE client_id = ?
+                """,
+                (client_id,),
+            ).fetchone()
+            row = (row["device_name"], row["device_token"]) if row else None
+    if not row:
+        return None
+    return {"device_name": row[0], "device_token": row[1]}
+
+
+def fetch_device_by_ip(ip_address):
+    ip_address = (ip_address or "").strip()
+    if not ip_address:
+        return None
+    with get_db() as conn:
+        if DB_BACKEND == "postgres":
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT device_name, device_token
+                    FROM devices
+                    WHERE last_ip = %s
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (ip_address,),
+                )
+                row = cur.fetchone()
+        else:
+            row = conn.execute(
+                """
+                SELECT device_name, device_token
+                FROM devices
+                WHERE last_ip = ?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (ip_address,),
+            ).fetchone()
+            row = (row["device_name"], row["device_token"]) if row else None
+    if not row:
+        return None
+    return {"device_name": row[0], "device_token": row[1]}
+
+
+def fetch_device_name_for_ip(ip_address):
+    device = fetch_device_by_ip(ip_address)
+    return device["device_name"] if device else None
 
 
 def migrate_status_history_schema(conn):
@@ -944,10 +1103,22 @@ def parse_operational_start(value):
     return parsed if parsed else now
 
 
-def register_device(device_name):
+def register_device(device_name, ip_address=None, client_id=None):
     device_name = device_name.strip()
     if not device_name:
         return None, "device_id is required."
+    ip_address = (ip_address or "").strip()
+    client_id = (client_id or "").strip()
+
+    existing_client = fetch_device_by_client_id(client_id) if client_id else None
+    if existing_client:
+        touch_device_ip(existing_client["device_name"], ip_address)
+        return {
+            "device_name": existing_client["device_name"],
+            "device_token": existing_client["device_token"],
+            "reconnected": existing_client["device_name"] != device_name,
+            "requested_name": device_name if existing_client["device_name"] != device_name else None,
+        }, None
 
     with get_db() as conn:
         if DB_BACKEND == "postgres":
@@ -958,6 +1129,16 @@ def register_device(device_name):
                 )
                 row = cur.fetchone()
                 if row:
+                    if ip_address:
+                        cur.execute(
+                            "UPDATE devices SET last_ip = %s WHERE device_name = %s",
+                            (ip_address, device_name),
+                        )
+                    if client_id:
+                        cur.execute(
+                            "UPDATE devices SET client_id = %s WHERE device_name = %s",
+                            (client_id, device_name),
+                        )
                     return {
                         "device_name": device_name,
                         "device_token": row[0],
@@ -968,28 +1149,51 @@ def register_device(device_name):
                 (device_name,),
             ).fetchone()
             if row:
+                if ip_address:
+                    conn.execute(
+                        "UPDATE devices SET last_ip = ? WHERE device_name = ?",
+                        (ip_address, device_name),
+                    )
+                if client_id:
+                    conn.execute(
+                        "UPDATE devices SET client_id = ? WHERE device_name = ?",
+                        (client_id, device_name),
+                    )
                 return {
                     "device_name": device_name,
                     "device_token": row["device_token"],
                 }, None
 
-        device_token = generate_device_token()
+    existing_ip = fetch_device_by_ip(ip_address) if ip_address else None
+    if existing_ip and existing_ip["device_name"] != device_name:
+        touch_device_ip(existing_ip["device_name"], ip_address)
+        if client_id:
+            touch_device_client_id(existing_ip["device_name"], client_id)
+        return {
+            "device_name": existing_ip["device_name"],
+            "device_token": existing_ip["device_token"],
+            "reconnected": True,
+            "requested_name": device_name,
+        }, None
+
+    device_token = generate_device_token()
+    with get_db() as conn:
         if DB_BACKEND == "postgres":
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO devices (device_name, device_token)
-                    VALUES (%s, %s)
+                    INSERT INTO devices (device_name, device_token, last_ip, client_id)
+                    VALUES (%s, %s, %s, %s)
                     """,
-                    (device_name, device_token),
+                    (device_name, device_token, ip_address, client_id or None),
                 )
         else:
             conn.execute(
                 """
-                INSERT INTO devices (device_name, device_token)
-                VALUES (?, ?)
+                INSERT INTO devices (device_name, device_token, last_ip, client_id)
+                VALUES (?, ?, ?, ?)
                 """,
-                (device_name, device_token),
+                (device_name, device_token, ip_address, client_id or None),
             )
 
     return {
@@ -2048,20 +2252,17 @@ def floor_scan_page():
     return render_template("floor-scan.html", statuses=STATUSES, status_labels=STATUS_LABELS)
 
 
-@app.route("/api/devices/register", methods=["POST"])
-def api_register_device():
-    payload = request.get_json(silent=True) or {}
-    device_id = (payload.get("device_id") or "").strip()
-    result, error = register_device(device_id)
-    if error:
-        return jsonify({"error": error}), 400
-    response = jsonify(
-        {
-            "device_id": result["device_name"],
-            "device_token": result["device_token"],
-        }
-    )
-    response.status_code = 201
+def device_register_response(result, *, status_code=201):
+    payload = {
+        "device_id": result["device_name"],
+        "device_token": result["device_token"],
+    }
+    if result.get("reconnected"):
+        payload["reconnected"] = True
+        if result.get("requested_name"):
+            payload["requested_name"] = result["requested_name"]
+    response = jsonify(payload)
+    response.status_code = status_code
     response.set_cookie(
         DEVICE_TOKEN_COOKIE,
         result["device_token"],
@@ -2070,6 +2271,42 @@ def api_register_device():
         secure=request.is_secure,
     )
     return response
+
+
+@app.route("/api/devices/register", methods=["POST"])
+def api_register_device():
+    try:
+        payload = request.get_json(silent=True) or {}
+        device_id = (payload.get("device_id") or "").strip()
+        ip = client_ip()
+        client_id = (payload.get("client_id") or "").strip() or None
+
+        token = extract_device_token(request.headers, payload, request.cookies)
+        if token:
+            device = fetch_device_by_token(token)
+            if device:
+                touch_device_ip(device["device_name"], ip)
+                if client_id:
+                    touch_device_client_id(device["device_name"], client_id)
+                return device_register_response(
+                    {
+                        "device_name": device["device_name"],
+                        "device_token": device["device_token"],
+                    },
+                    status_code=200,
+                )
+
+        result, error = register_device(
+            device_id,
+            ip_address=ip,
+            client_id=client_id,
+        )
+        if error:
+            return jsonify({"error": error}), 400
+        return device_register_response(result)
+    except Exception as exc:
+        logging.exception("Device registration failed")
+        return jsonify({"error": str(exc)}), 500
 
 
 def list_devices():
@@ -2231,7 +2468,46 @@ def api_device_me():
     device = fetch_device_by_token(token)
     if not device:
         return jsonify({"error": "Invalid device token."}), 401
-    return jsonify({"device_id": device["device_name"]})
+    touch_device_ip(device["device_name"], client_ip())
+    return jsonify(
+        {
+            "device_id": device["device_name"],
+            "device_token": token,
+        }
+    )
+
+
+@app.route("/api/devices/suggest", methods=["GET"])
+def api_device_suggest():
+    """Suggest a device name for this machine (cookie, client_id, or IP hint)."""
+    token = extract_device_token(request.headers, {}, request.cookies)
+    if token:
+        device = fetch_device_by_token(token)
+        if device:
+            return jsonify(
+                {
+                    "device_id": device["device_name"],
+                    "device_token": token,
+                    "restored": True,
+                }
+            )
+
+    client_id = (request.headers.get("X-Client-Id") or "").strip()
+    if client_id:
+        device = fetch_device_by_client_id(client_id)
+        if device:
+            return jsonify(
+                {
+                    "device_id": device["device_name"],
+                    "device_token": device["device_token"],
+                    "restored": True,
+                }
+            )
+
+    suggested = fetch_device_name_for_ip(client_ip())
+    if suggested:
+        return jsonify({"device_id": suggested, "restored": False})
+    return jsonify({"device_id": None, "restored": False})
 
 
 @app.route("/api/floor/scan", methods=["POST"])
